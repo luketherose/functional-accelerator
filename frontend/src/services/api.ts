@@ -61,6 +61,31 @@ export const analysisApi = {
 
   delete: (projectId: string, analysisId: string) =>
     api.delete(`/api/analysis/${projectId}/${analysisId}`).then(r => r.data),
+
+  getImpactPrototype: (projectId: string, analysisId: string, impactId: string) =>
+    api.get<{ id: string; impact_id: string; html: string; created_at: string }>(
+      `/api/analysis/${projectId}/${analysisId}/impact-prototype/${encodeURIComponent(impactId)}`
+    ).then(r => r.data),
+
+  generateImpactPrototype: (
+    projectId: string,
+    analysisId: string,
+    impactId: string,
+    impactArea: string,
+    impactDescription: string,
+    file: File
+  ) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('impactId', impactId);
+    form.append('impactArea', impactArea);
+    form.append('impactDescription', impactDescription);
+    return api.post<{ id: string; impact_id: string; html: string; created_at: string }>(
+      `/api/analysis/${projectId}/${analysisId}/impact-prototype`,
+      form,
+      { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120_000 }
+    ).then(r => r.data);
+  },
 };
 
 // Helper to parse result_json from an analysis record

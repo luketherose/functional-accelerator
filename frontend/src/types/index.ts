@@ -1,7 +1,7 @@
 // Shared TypeScript types for the frontend
 
 export type ProjectStatus = 'draft' | 'ready' | 'analyzing' | 'done' | 'error';
-export type FileBucket = 'as-is' | 'to-be' | 'screenshot';
+export type FileBucket = 'as-is' | 'to-be';
 export type AnalysisStatus = 'pending' | 'running' | 'done' | 'error';
 export type Severity = 'high' | 'medium' | 'low';
 export type ChangeType = 'modified' | 'new' | 'removed';

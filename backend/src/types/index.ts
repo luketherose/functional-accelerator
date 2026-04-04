@@ -1,7 +1,7 @@
 // Shared TypeScript types used across backend modules
 
 export type ProjectStatus = 'draft' | 'ready' | 'analyzing' | 'done' | 'error';
-export type FileBucket = 'as-is' | 'to-be' | 'screenshot';
+export type FileBucket = 'as-is' | 'to-be';
 
 export interface Project {
   id: string;

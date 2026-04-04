@@ -165,7 +165,7 @@ export default function ProjectDetailPage() {
           {activeSection === 'documents' && (
             <div className="p-5 space-y-6">
               {/* Uploaders */}
-              {(['as-is', 'to-be', 'screenshot'] as FileBucket[]).map(bucket => (
+              {(['as-is', 'to-be'] as FileBucket[]).map(bucket => (
                 <div key={bucket}>
                   <div className="mb-2">
                     <span className={`badge ${bucket === 'as-is' ? 'badge-asis' : bucket === 'to-be' ? 'badge-tobe' : 'badge-screenshot'} mb-2`}>
@@ -279,7 +279,7 @@ export default function ProjectDetailPage() {
           )}
 
           {analysisResult && (
-            <AnalysisTabs result={analysisResult} />
+            <AnalysisTabs result={analysisResult} projectId={id!} analysisId={selectedAnalysis!.id} />
           )}
         </div>
       </div>

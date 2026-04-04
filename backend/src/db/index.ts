@@ -51,6 +51,15 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS impact_prototypes (
+    id TEXT PRIMARY KEY,
+    analysis_id TEXT NOT NULL,
+    impact_id TEXT NOT NULL,
+    html TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
+  );
 `);
 
 console.log('[DB] SQLite initialized at', path.resolve(DB_PATH));

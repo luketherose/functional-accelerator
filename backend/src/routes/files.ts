@@ -70,7 +70,7 @@ router.post('/:projectId/upload', upload.single('file'), async (req: Request, re
 
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    const bucket: FileBucket = (['as-is', 'to-be', 'screenshot'].includes(req.body.bucket)
+    const bucket: FileBucket = (['as-is', 'to-be'].includes(req.body.bucket)
       ? req.body.bucket
       : 'as-is') as FileBucket;
 
