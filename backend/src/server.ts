@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import path from 'path';
 import { Request, Response, NextFunction } from 'express';
 
 // Initialize DB on startup
@@ -20,7 +19,7 @@ app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Health check
-app.get('/health', (_req, res) => res.json({ status: 'ok', mock: process.env.CLAUDE_MOCK === 'true' }));
+app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
 // --- API Routes ---
 app.use('/api/projects', projectsRouter);
@@ -40,6 +39,5 @@ app.use((_req, res) => {
 
 app.listen(PORT, () => {
   console.log(`\n🚀 Functional Accelerator backend running on http://localhost:${PORT}`);
-  console.log(`   Mode: ${process.env.CLAUDE_MOCK === 'true' ? '🔶 MOCK' : '🟢 REAL Claude API'}`);
   console.log(`   Model: ${process.env.CLAUDE_MODEL || 'claude-opus-4-5'}\n`);
 });
