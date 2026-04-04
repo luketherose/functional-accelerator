@@ -63,7 +63,7 @@ export const analysisApi = {
     api.delete(`/api/analysis/${projectId}/${analysisId}`).then(r => r.data),
 
   getImpactPrototype: (projectId: string, analysisId: string, impactId: string) =>
-    api.get<{ id: string; impact_id: string; html: string; created_at: string }>(
+    api.get<{ id: string; impact_id: string; image_data: string; created_at: string }>(
       `/api/analysis/${projectId}/${analysisId}/impact-prototype/${encodeURIComponent(impactId)}`
     ).then(r => r.data),
 
@@ -80,10 +80,10 @@ export const analysisApi = {
     form.append('impactId', impactId);
     form.append('impactArea', impactArea);
     form.append('impactDescription', impactDescription);
-    return api.post<{ id: string; impact_id: string; html: string; created_at: string }>(
+    return api.post<{ id: string; impact_id: string; image_data: string; created_at: string }>(
       `/api/analysis/${projectId}/${analysisId}/impact-prototype`,
       form,
-      { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120_000 }
+      { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 180_000 }
     ).then(r => r.data);
   },
 };

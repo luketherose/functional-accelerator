@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import DOMPurify from 'dompurify';
-import { Upload, Loader2, Eye, Download, AlertCircle, Image, X } from 'lucide-react';
+import { Upload, Loader2, Download, AlertCircle, Image, X, RefreshCw } from 'lucide-react';
 import type { Impact } from '../types';
 import { analysisApi } from '../services/api';
 
@@ -11,7 +10,7 @@ interface ImpactPrototypeProps {
 }
 
 export default function ImpactPrototype({ impact, projectId, analysisId }: ImpactPrototypeProps) {
-  const [html, setHtml] = useState<string | null>(null);
+  const [imageData, setImageData] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -22,8 +21,8 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
   useEffect(() => {
     let cancelled = false;
     analysisApi.getImpactPrototype(projectId, analysisId, impact.id)
-      .then(data => { if (!cancelled) setHtml(data.html); })
-      .catch(() => { /* 404 = no prototype yet, that's fine */ })
+      .then(data => { if (!cancelled) setImageData(data.image_data); })
+      .catch(() => { /* 404 = no prototype yet */ })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [projectId, analysisId, impact.id]);
@@ -36,7 +35,7 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
       const data = await analysisApi.generateImpactPrototype(
         projectId, analysisId, impact.id, impact.area, impact.description, file
       );
-      setHtml(data.html);
+      setImageData(data.image_data);
       setFile(null);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Generation failed');
@@ -59,22 +58,12 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
   };
 
   const handleDownload = () => {
-    if (!html) return;
-    const blob = new Blob([html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
+    if (!imageData) return;
     const a = document.createElement('a');
-    a.href = url;
-    a.download = `prototype-${impact.id}-${impact.area.replace(/\s+/g, '-').toLowerCase()}.html`;
+    a.href = `data:image/png;base64,${imageData}`;
+    a.download = `prototype-${impact.id}-${impact.area.replace(/\s+/g, '-').toLowerCase()}.png`;
     a.click();
-    URL.revokeObjectURL(url);
   };
-
-  const sanitized = html ? DOMPurify.sanitize(html, {
-    FORCE_BODY: false,
-    WHOLE_DOCUMENT: true,
-    ADD_TAGS: ['style', 'meta', 'link'],
-    ADD_ATTR: ['charset', 'name', 'content', 'http-equiv', 'rel', 'href', 'type'],
-  }) : '';
 
   if (loading) {
     return (
@@ -86,10 +75,10 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
 
   return (
     <div className="mt-4 space-y-4 border-t border-surface-border pt-4">
-      <p className="text-xs font-semibold text-text-muted uppercase tracking-wide">Generate UI Prototype</p>
+      <p className="text-xs font-semibold text-text-muted uppercase tracking-wide">Generate Modified Screen</p>
 
-      {/* Upload zone */}
-      {!generating && (
+      {/* Upload zone — shown when no image yet or user wants to regenerate */}
+      {!generating && !imageData && (
         <div className="space-y-2">
           {!file ? (
             <label
@@ -104,7 +93,7 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
               <Upload size={16} className="text-text-muted" />
               <p className="text-xs text-text-secondary text-center">
                 Drop the <strong>current (as-is)</strong> screenshot here<br />
-                <span className="text-text-muted">PNG, JPG, WEBP</span>
+                <span className="text-text-muted">PNG, JPG, WEBP — Claude will modify it to show the change</span>
               </p>
             </label>
           ) : (
@@ -122,43 +111,42 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
             disabled={!file}
             className="btn-primary w-full justify-center text-xs py-2"
           >
-            <Eye size={13} /> Generate Prototype
+            Generate Modified Screen
           </button>
         </div>
       )}
 
+      {/* Generating state */}
       {generating && (
-        <div className="flex items-center gap-3 py-4 text-text-muted text-sm">
-          <Loader2 size={16} className="animate-spin text-purple-deep" />
-          <span>Generating prototype… this may take up to a minute.</span>
+        <div className="flex items-center gap-3 py-6 text-text-muted text-sm justify-center">
+          <Loader2 size={18} className="animate-spin text-purple-deep" />
+          <span>Generating modified screen… this may take up to a minute.</span>
         </div>
       )}
 
       {error && (
-        <div className="flex items-center gap-2 text-red-500 text-xs">
+        <div className="flex items-center gap-2 text-red-500 text-xs mt-1">
           <AlertCircle size={13} /> {error}
         </div>
       )}
 
-      {/* Preview */}
-      {html && !generating && (
-        <div className="space-y-2">
+      {/* Result image */}
+      {imageData && !generating && (
+        <div className="space-y-3">
           <div className="rounded-xl overflow-hidden border border-surface-border shadow-card bg-white">
-            <iframe
-              srcDoc={sanitized}
+            <img
+              src={`data:image/png;base64,${imageData}`}
+              alt={`Modified screen — ${impact.area}`}
               className="w-full"
-              style={{ height: '400px' }}
-              sandbox="allow-same-origin"
-              title={`Prototype — ${impact.area}`}
             />
           </div>
           <div className="flex gap-2">
             <button onClick={handleDownload} className="btn-secondary text-xs py-1.5 px-3">
-              <Download size={13} /> Download HTML
+              <Download size={13} /> Download PNG
             </button>
-            <label className="btn-secondary text-xs py-1.5 px-3 cursor-pointer">
-              <input type="file" className="hidden" accept="image/*" onChange={handleFileInput} />
-              <Upload size={13} /> Re-generate
+            <label className="btn-secondary text-xs py-1.5 px-3 cursor-pointer inline-flex items-center gap-2">
+              <input type="file" className="hidden" accept="image/*" onChange={e => { handleFileInput(e); setImageData(null); }} />
+              <RefreshCw size={13} /> Re-generate
             </label>
           </div>
         </div>

@@ -7,6 +7,7 @@ import db from '../db';
 import { buildAnalysisPrompt, buildImpactPrototypePrompt } from '../services/promptBuilder';
 import { callClaude, callClaudeForHtml } from '../services/claude';
 import { readImageAsBase64 } from '../services/fileParsing';
+import { renderHtmlToPng } from '../services/imageRenderer';
 import type { ProjectFile } from '../types';
 
 const router = Router();
@@ -35,7 +36,7 @@ router.get('/:projectId', (req: Request, res: Response) => {
 router.get('/:projectId/:analysisId/impact-prototype/:impactId', (req: Request, res: Response) => {
   try {
     const proto = db.prepare(
-      'SELECT * FROM impact_prototypes WHERE analysis_id = ? AND impact_id = ?'
+      'SELECT id, analysis_id, impact_id, image_data, created_at FROM impact_prototypes WHERE analysis_id = ? AND impact_id = ?'
     ).get(req.params.analysisId, req.params.impactId);
     if (!proto) return res.status(404).json({ error: 'No prototype found for this impact' });
     res.json(proto);
@@ -115,18 +116,22 @@ router.post('/:projectId/:analysisId/impact-prototype', tmpUpload.single('file')
     const imageBlock = { type: 'image' as const, source: { type: 'base64' as const, media_type: mediaType, data } };
 
     const prompt = buildImpactPrototypePrompt({ area: impactArea, description: impactDescription }, project.name);
+    console.log(`[analysis] Generating HTML prototype for impact ${impactId}...`);
     const html = await callClaudeForHtml(prompt, imageBlock);
+
+    console.log(`[analysis] Rendering HTML to PNG for impact ${impactId}...`);
+    const imageData = await renderHtmlToPng(html);
 
     // Upsert into impact_prototypes
     const existing = db.prepare('SELECT id FROM impact_prototypes WHERE analysis_id = ? AND impact_id = ?').get(analysisId, impactId) as { id: string } | undefined;
     if (existing) {
-      db.prepare('UPDATE impact_prototypes SET html = ?, created_at = datetime(\'now\') WHERE id = ?').run(html, existing.id);
+      db.prepare("UPDATE impact_prototypes SET image_data = ?, created_at = datetime('now') WHERE id = ?").run(imageData, existing.id);
     } else {
       const protoId = uuidv4();
-      db.prepare('INSERT INTO impact_prototypes (id, analysis_id, impact_id, html) VALUES (?, ?, ?, ?)').run(protoId, analysisId, impactId, html);
+      db.prepare('INSERT INTO impact_prototypes (id, analysis_id, impact_id, image_data) VALUES (?, ?, ?, ?)').run(protoId, analysisId, impactId, imageData);
     }
 
-    const saved = db.prepare('SELECT * FROM impact_prototypes WHERE analysis_id = ? AND impact_id = ?').get(analysisId, impactId);
+    const saved = db.prepare('SELECT id, analysis_id, impact_id, image_data, created_at FROM impact_prototypes WHERE analysis_id = ? AND impact_id = ?').get(analysisId, impactId);
     res.json(saved);
 
   } catch (err: unknown) {

@@ -15,7 +15,7 @@ const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
-// --- Migrations ---
+// --- Schema ---
 db.exec(`
   CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
@@ -56,11 +56,31 @@ db.exec(`
     id TEXT PRIMARY KEY,
     analysis_id TEXT NOT NULL,
     impact_id TEXT NOT NULL,
-    html TEXT NOT NULL,
+    image_data TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
   );
 `);
+
+// --- Migration: recreate impact_prototypes if it uses old 'html' column ---
+const cols = db.prepare("PRAGMA table_info(impact_prototypes)").all() as { name: string }[];
+if (cols.length > 0 && !cols.find(c => c.name === 'image_data')) {
+  console.log('[DB] Migrating impact_prototypes table to image_data schema...');
+  db.pragma('foreign_keys = OFF');
+  db.exec(`
+    DROP TABLE IF EXISTS impact_prototypes;
+    CREATE TABLE impact_prototypes (
+      id TEXT PRIMARY KEY,
+      analysis_id TEXT NOT NULL,
+      impact_id TEXT NOT NULL,
+      image_data TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
+    );
+  `);
+  db.pragma('foreign_keys = ON');
+  console.log('[DB] Migration complete.');
+}
 
 console.log('[DB] SQLite initialized at', path.resolve(DB_PATH));
 
