@@ -1,7 +1,7 @@
 // Shared TypeScript types for the frontend
 
 export type ProjectStatus = 'draft' | 'ready' | 'analyzing' | 'done' | 'error';
-export type FileBucket = 'as-is' | 'to-be';
+export type FileBucket = 'as-is' | 'to-be' | 'business-rules';
 export type AnalysisStatus = 'pending' | 'running' | 'done' | 'error';
 export type Severity = 'high' | 'medium' | 'low';
 export type ChangeType = 'modified' | 'new' | 'removed';
@@ -69,6 +69,28 @@ export interface ProposedChange {
   screen: string;
   change: string;
   priority: Severity;
+}
+
+export interface RiskAssessment {
+  id: string;
+  project_id: string;
+  version_name: string;
+  status: 'pending' | 'running' | 'done' | 'error';
+  defect_count: number | null;
+  result_json: string | null;
+  error_message: string | null;
+  progress_step: string | null;
+  created_at: string;
+}
+
+export interface RiskAssessmentResult {
+  summary: string;
+  defectCategories: { name: string; count: number; percentage: number }[];
+  priorityDistribution: { priority: string; count: number; percentage: number }[];
+  topDefects: { title: string; count: number; priority: string; category: string }[];
+  riskAreas: { area: string; riskLevel: 'high' | 'medium' | 'low'; rationale: string; recommendation: string }[];
+  patterns: string[];
+  overallRiskLevel: 'high' | 'medium' | 'low';
 }
 
 export interface AnalysisResult {

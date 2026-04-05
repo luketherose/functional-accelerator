@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import axios from 'axios';
 import { Upload, Loader2, Download, AlertCircle, Image, X, RefreshCw } from 'lucide-react';
 import type { Impact } from '../types';
 import { analysisApi } from '../services/api';
@@ -12,10 +13,12 @@ interface ImpactPrototypeProps {
 export default function ImpactPrototype({ impact, projectId, analysisId }: ImpactPrototypeProps) {
   const [imageData, setImageData] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [asIsPreview, setAsIsPreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
   const [isDragging, setIsDragging] = useState(false);
+  const previewUrlRef = useRef<string | null>(null);
 
   // Load existing prototype on mount
   useEffect(() => {
@@ -27,6 +30,21 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
     return () => { cancelled = true; };
   }, [projectId, analysisId, impact.id]);
 
+  // Create/revoke object URL for as-is preview
+  useEffect(() => {
+    if (file) {
+      const url = URL.createObjectURL(file);
+      previewUrlRef.current = url;
+      setAsIsPreview(url);
+      return () => {
+        URL.revokeObjectURL(url);
+        previewUrlRef.current = null;
+      };
+    } else {
+      setAsIsPreview(null);
+    }
+  }, [file]);
+
   const handleGenerate = async () => {
     if (!file) return;
     setGenerating(true);
@@ -37,8 +55,12 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
       );
       setImageData(data.image_data);
       setFile(null);
+      // Keep asIsPreview alive until user explicitly re-uploads
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Generation failed');
+      const msg = axios.isAxiosError(err)
+        ? (err.response?.data?.error ?? err.message)
+        : (err instanceof Error ? err.message : 'Generation failed');
+      setError(msg);
     } finally {
       setGenerating(false);
     }
@@ -63,6 +85,12 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
     a.href = `data:image/png;base64,${imageData}`;
     a.download = `prototype-${impact.id}-${impact.area.replace(/\s+/g, '-').toLowerCase()}.png`;
     a.click();
+  };
+
+  const handleRegenerate = (e: React.ChangeEvent<HTMLInputElement>) => {
+    handleFileInput(e);
+    setImageData(null);
+    setAsIsPreview(null);
   };
 
   if (loading) {
@@ -130,22 +158,44 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
         </div>
       )}
 
-      {/* Result image */}
+      {/* Result: side-by-side comparison when as-is preview is available, otherwise single image */}
       {imageData && !generating && (
         <div className="space-y-3">
-          <div className="rounded-xl overflow-hidden border border-surface-border shadow-card bg-white">
-            <img
-              src={`data:image/png;base64,${imageData}`}
-              alt={`Modified screen — ${impact.area}`}
-              className="w-full"
-            />
-          </div>
+          {asIsPreview ? (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-1.5">As-Is</p>
+                <div className="rounded-xl overflow-hidden border border-surface-border shadow-card bg-white">
+                  <img src={asIsPreview} alt="Original as-is screen" className="w-full" />
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-1.5">Modified</p>
+                <div className="rounded-xl overflow-hidden border border-purple-deep/20 shadow-card bg-white">
+                  <img
+                    src={`data:image/png;base64,${imageData}`}
+                    alt={`Modified screen — ${impact.area}`}
+                    className="w-full"
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-xl overflow-hidden border border-surface-border shadow-card bg-white">
+              <img
+                src={`data:image/png;base64,${imageData}`}
+                alt={`Modified screen — ${impact.area}`}
+                className="w-full"
+              />
+            </div>
+          )}
+
           <div className="flex gap-2">
             <button onClick={handleDownload} className="btn-secondary text-xs py-1.5 px-3">
               <Download size={13} /> Download PNG
             </button>
             <label className="btn-secondary text-xs py-1.5 px-3 cursor-pointer inline-flex items-center gap-2">
-              <input type="file" className="hidden" accept="image/*" onChange={e => { handleFileInput(e); setImageData(null); }} />
+              <input type="file" className="hidden" accept="image/*" onChange={handleRegenerate} />
               <RefreshCw size={13} /> Re-generate
             </label>
           </div>

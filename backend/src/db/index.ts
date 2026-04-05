@@ -52,6 +52,19 @@ db.exec(`
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
   );
 
+  CREATE TABLE IF NOT EXISTS risk_assessments (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    version_name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    defect_count INTEGER,
+    result_json TEXT,
+    error_message TEXT,
+    progress_step TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+  );
+
   CREATE TABLE IF NOT EXISTS impact_prototypes (
     id TEXT PRIMARY KEY,
     analysis_id TEXT NOT NULL,

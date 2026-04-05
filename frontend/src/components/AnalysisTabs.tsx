@@ -197,11 +197,10 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
                       </div>
                       <p className="text-sm text-text-secondary leading-relaxed mt-2">{impact.description}</p>
                     </button>
-                    {isExpanded && (
-                      <div className="px-4 pb-4">
-                        <ImpactPrototype impact={impact} projectId={projectId} analysisId={analysisId} />
-                      </div>
-                    )}
+                    {/* Always mounted to preserve state during generation — hidden when collapsed */}
+                    <div className={isExpanded ? 'px-4 pb-4' : 'hidden'}>
+                      <ImpactPrototype impact={impact} projectId={projectId} analysisId={analysisId} />
+                    </div>
                   </div>
                 );
               })

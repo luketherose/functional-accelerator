@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult } from '../types';
+import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -86,6 +86,30 @@ export const analysisApi = {
       { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 180_000 }
     ).then(r => r.data);
   },
+};
+
+// --- Risk Assessment ---
+export const riskApi = {
+  list: (projectId: string) =>
+    api.get<RiskAssessment[]>(`/api/risk/${projectId}`).then(r => r.data),
+
+  get: (projectId: string, assessmentId: string) =>
+    api.get<RiskAssessment>(`/api/risk/${projectId}/${assessmentId}`).then(r => r.data),
+
+  run: (projectId: string, file: File, sourceContext: string, targetContext: string) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('sourceContext', sourceContext);
+    form.append('targetContext', targetContext);
+    return api.post<{ assessmentId: string; versionName: string; status: string }>(
+      `/api/risk/${projectId}/run`,
+      form,
+      { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 30_000 }
+    ).then(r => r.data);
+  },
+
+  delete: (projectId: string, assessmentId: string) =>
+    api.delete(`/api/risk/${projectId}/${assessmentId}`).then(r => r.data),
 };
 
 // Helper to parse result_json from an analysis record

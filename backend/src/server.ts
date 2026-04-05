@@ -9,6 +9,7 @@ import './db';
 import projectsRouter from './routes/projects';
 import filesRouter from './routes/files';
 import analysisRouter from './routes/analysis';
+import riskRouter from './routes/risk';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -25,6 +26,7 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 app.use('/api/projects', projectsRouter);
 app.use('/api/files', filesRouter);
 app.use('/api/analysis', analysisRouter);
+app.use('/api/risk', riskRouter);
 
 // --- Error handler ---
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {

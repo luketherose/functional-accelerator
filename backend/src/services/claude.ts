@@ -3,7 +3,7 @@ import type { AnalysisResult } from '../types';
 import type { ImageBlock } from './promptBuilder';
 
 const MODEL = process.env.CLAUDE_MODEL || 'claude-opus-4-5';
-const TIMEOUT_MS = 120_000;
+const TIMEOUT_MS = 240_000; // 4 minutes
 
 let client: Anthropic | null = null;
 
@@ -101,6 +101,46 @@ export async function callClaudeForHtml(prompt: string, imageBlock: ImageBlock):
     clearTimeout(timeout);
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error('Claude API request timed out after 2 minutes');
+    }
+    throw err;
+  }
+}
+
+/**
+ * Generic Claude call that returns a parsed JSON object of type T.
+ * Used for risk assessment and other structured JSON responses.
+ */
+export async function callClaudeJson<T = Record<string, unknown>>(prompt: string): Promise<T> {
+  const anthropic = getClient();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+  try {
+    const message = await anthropic.messages.create(
+      {
+        model: MODEL,
+        max_tokens: 4096,
+        messages: [{ role: 'user', content: prompt }],
+      },
+      { signal: controller.signal }
+    );
+    clearTimeout(timeout);
+
+    const rawText = message.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map(b => b.text)
+      .join('');
+
+    let cleaned = rawText.trim();
+    if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    }
+
+    return JSON.parse(cleaned) as T;
+  } catch (err: unknown) {
+    clearTimeout(timeout);
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Claude API request timed out');
     }
     throw err;
   }

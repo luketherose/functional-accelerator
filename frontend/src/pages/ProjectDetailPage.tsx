@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   Play, Loader2, RefreshCw, Trash2,
-  Clock, CheckCircle2, AlertCircle, FileText, History
+  Clock, CheckCircle2, AlertCircle, FileText, History,
+  Pencil, X, Check, ShieldAlert
 } from 'lucide-react';
 import type { ProjectDetail, Analysis, FileBucket } from '../types';
 import { projectsApi, analysisApi, parseAnalysisResult } from '../services/api';
@@ -31,12 +32,17 @@ export default function ProjectDetailPage() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [, setPollingId] = useState<ReturnType<typeof setInterval> | null>(null);
 
+  // Edit project state
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [saving, setSaving] = useState(false);
+
   const load = useCallback(async () => {
     if (!id) return;
     try {
       const data = await projectsApi.get(id);
       setProject(data);
-      // Auto-select latest done analysis
       const latestDone = data.analyses.find((a: Analysis) => a.status === 'done');
       if (latestDone && !selectedAnalysis) {
         setSelectedAnalysis(latestDone);
@@ -95,6 +101,27 @@ export default function ProjectDetailPage() {
     load();
   };
 
+  const startEditing = () => {
+    if (!project) return;
+    setEditName(project.name);
+    setEditDescription(project.description || '');
+    setEditing(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!id || !editName.trim()) return;
+    setSaving(true);
+    try {
+      await projectsApi.update(id, { name: editName.trim(), description: editDescription.trim() });
+      await load();
+      setEditing(false);
+    } catch {
+      alert('Failed to save changes');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64 text-text-muted">
@@ -120,25 +147,77 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <PageHeader
-        title={project.name}
-        subtitle={project.description || 'No description'}
-        breadcrumbs={[{ label: 'Projects', href: '/' }, { label: project.name }]}
-        actions={
-          <button
-            className="btn-primary"
-            onClick={handleAnalyze}
-            disabled={hasRunningAnalysis || fileCount === 0}
-            title={fileCount === 0 ? 'Upload documents first' : ''}
-          >
-            {hasRunningAnalysis ? (
-              <><Loader2 size={14} className="animate-spin" /> Analyzing…</>
-            ) : (
-              <><Play size={14} /> Analyze Impacts</>
-            )}
-          </button>
-        }
-      />
+      {/* Header — normal or edit mode */}
+      {editing ? (
+        <div className="border-b border-surface-border bg-white px-8 py-5">
+          <div className="flex items-center gap-1.5 text-xs text-text-muted mb-2">
+            <a href="/" className="hover:text-text-primary transition-colors">Projects</a>
+            <span>/</span>
+            <span className="text-text-secondary">{project.name}</span>
+          </div>
+          <div className="flex items-start gap-4">
+            <div className="flex-1 space-y-2">
+              <input
+                className="input text-base font-semibold"
+                value={editName}
+                onChange={e => setEditName(e.target.value)}
+                placeholder="Project name"
+                autoFocus
+              />
+              <input
+                className="input text-sm"
+                value={editDescription}
+                onChange={e => setEditDescription(e.target.value)}
+                placeholder="Description (optional)"
+              />
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <button className="btn-secondary text-sm py-1.5" onClick={() => setEditing(false)}>
+                <X size={14} /> Cancel
+              </button>
+              <button className="btn-primary text-sm py-1.5" onClick={handleSaveEdit} disabled={saving || !editName.trim()}>
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <PageHeader
+          title={project.name}
+          subtitle={project.description || 'No description'}
+          breadcrumbs={[{ label: 'Projects', href: '/' }, { label: project.name }]}
+          actions={
+            <div className="flex items-center gap-2">
+              <button
+                className="btn-secondary text-sm"
+                onClick={startEditing}
+                title="Edit project details"
+              >
+                <Pencil size={14} /> Edit
+              </button>
+              <Link
+                to={`/projects/${id}/risk-assessment`}
+                className="btn-secondary text-sm"
+                title="Risk Assessment"
+              >
+                <ShieldAlert size={14} /> Risk Assessment
+              </Link>
+              <button
+                className="btn-primary"
+                onClick={handleAnalyze}
+                disabled={hasRunningAnalysis || fileCount === 0}
+                title={fileCount === 0 ? 'Upload documents first' : ''}
+              >
+                {hasRunningAnalysis ? (
+                  <><Loader2 size={14} className="animate-spin" /> Analyzing…</>
+                ) : (
+                  <><Play size={14} /> Analyze Impacts</>
+                )}
+              </button>
+            </div>
+          }
+        />
+      )}
 
       <div className="flex flex-1 overflow-hidden">
         {/* Left panel — Documents */}
@@ -164,12 +243,11 @@ export default function ProjectDetailPage() {
 
           {activeSection === 'documents' && (
             <div className="p-5 space-y-6">
-              {/* Uploaders */}
-              {(['as-is', 'to-be'] as FileBucket[]).map(bucket => (
+              {(['as-is', 'to-be', 'business-rules'] as FileBucket[]).map(bucket => (
                 <div key={bucket}>
                   <div className="mb-2">
-                    <span className={`badge ${bucket === 'as-is' ? 'badge-asis' : bucket === 'to-be' ? 'badge-tobe' : 'badge-screenshot'} mb-2`}>
-                      {bucket === 'as-is' ? 'As-Is' : bucket === 'to-be' ? 'To-Be' : 'Screenshots'}
+                    <span className={`badge ${bucket === 'as-is' ? 'badge-asis' : bucket === 'to-be' ? 'badge-tobe' : 'badge-br'} mb-2`}>
+                      {bucket === 'as-is' ? 'As-Is' : bucket === 'to-be' ? 'To-Be' : 'Business Rules'}
                     </span>
                   </div>
                   <FileUploader projectId={project.id} bucket={bucket} onUploadComplete={load} />

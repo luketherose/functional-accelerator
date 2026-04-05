@@ -153,7 +153,8 @@ async function runAnalysisAsync(
 ) {
   try {
     const prompt = await buildAnalysisPrompt(project, files);
-    const inputSummary = `Project: ${project.name} | Files: ${files.length} (${files.filter(f => f.bucket === 'as-is').length} as-is, ${files.filter(f => f.bucket === 'to-be').length} to-be)`;
+    const brCount = files.filter(f => f.bucket === 'business-rules').length;
+    const inputSummary = `Project: ${project.name} | Files: ${files.length} (${files.filter(f => f.bucket === 'as-is').length} as-is, ${files.filter(f => f.bucket === 'to-be').length} to-be${brCount > 0 ? `, ${brCount} BR` : ''})`;
 
     console.log(`[analysis] Running ${analysisId} — ${inputSummary}`);
 

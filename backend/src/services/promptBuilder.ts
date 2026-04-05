@@ -19,16 +19,23 @@ export async function buildAnalysisPrompt(
 ): Promise<string> {
   const asisFiles = files.filter(f => f.bucket === 'as-is');
   const tobeFiles = files.filter(f => f.bucket === 'to-be');
+  const brFiles = files.filter(f => f.bucket === 'business-rules');
 
   const formatFileSection = (fileList: ProjectFile[], sectionTitle: string): string => {
     if (fileList.length === 0) return `### ${sectionTitle}\n_No documents uploaded._\n`;
     return `### ${sectionTitle}\n` + fileList.map(f => {
       const text = f.extracted_text
-        ? `\n**File:** ${f.original_name}\n\`\`\`\n${f.extracted_text.slice(0, 30_000)}\n\`\`\``
+        ? `\n**File:** ${f.original_name}\n\`\`\`\n${f.extracted_text.slice(0, 10_000)}\n\`\`\``
         : `\n**File:** ${f.original_name} (${f.mime_type}) — [no extractable text, provided as reference]`;
       return text;
     }).join('\n\n---\n\n');
   };
+
+  const brSection = brFiles.length > 0
+    ? `${formatFileSection(brFiles, 'PROVIDED Business Rules (factum positum — treat as authoritative, do not modify or re-infer)')}`
+    : '';
+
+  const hasBrFiles = brFiles.length > 0;
 
   return `You are an expert functional analyst and UI/UX architect.
 You have been given documentation for a software project and must produce a thorough impact analysis.
@@ -45,6 +52,8 @@ ${formatFileSection(asisFiles, 'AS-IS Documentation (Current State)')}
 
 ${formatFileSection(tobeFiles, 'TO-BE Documentation (Target Requirements)')}
 
+${brSection}
+
 ---
 
 ## YOUR TASK
@@ -56,7 +65,7 @@ Return your response **exclusively as valid JSON** — no markdown code fences, 
 Use this exact schema:
 
 {
-  "executiveSummary": "string — 3-5 sentence summary of what changes and why",
+  "executiveSummary": "string — 3-5 sentence summary of what changes and why${hasBrFiles ? '. Explicitly mention which business rules were provided vs inferred.' : ''}",
   "functionalImpacts": [
     { "id": "FI-01", "area": "string", "description": "string", "severity": "high|medium|low" }
   ],
@@ -72,13 +81,11 @@ Use this exact schema:
     }
   ],
   "businessRulesExtracted": [
-    { "id": "BR-01", "description": "string", "source": "as-is|to-be|inferred" }
+    { "id": "BR-01", "description": "string", "source": "${hasBrFiles ? 'provided|as-is|to-be|inferred' : 'as-is|to-be|inferred'}" }
   ],
   "proposedChanges": [
     { "screen": "string", "change": "string", "priority": "high|medium|low" }
   ],
-  "prototypeInstructions": "string — textual description of the proposed UI layout, components, and interactions",
-  "prototypeHtml": "string — a complete, self-contained HTML document (with inline CSS, no external dependencies) that visually represents the proposed new screen or interface. Must be a realistic wireframe/prototype that match the requirements. Use a clean, professional design with a light background, proper typography, and layout. Include realistic placeholder labels and fields.",
   "assumptions": ["string"],
   "openQuestions": ["string"]
 }
@@ -86,9 +93,8 @@ Use this exact schema:
 Requirements:
 - functionalImpacts must have at least 3 items if there is enough context
 - uiUxImpacts must have at least 2 items if there is enough context
-- prototypeHtml MUST be a real, renderable HTML document — not a description, not pseudo-HTML
-- prototypeHtml should represent the MOST IMPORTANT changed screen identified
-- If minimal context is provided, still produce the best analysis possible with clear assumptions
+- Keep descriptions concise (2-3 sentences max per item)
+${hasBrFiles ? `- For businessRulesExtracted: include ALL provided business rules with source "provided". Do NOT re-state them differently. Then add any ADDITIONAL rules you infer from context with source "inferred".\n` : ''}- If minimal context is provided, still produce the best analysis possible with clear assumptions
 
 Respond with JSON only.`;
 }
