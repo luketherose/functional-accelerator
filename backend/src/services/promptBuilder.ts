@@ -107,19 +107,28 @@ export function buildImpactPrototypePrompt(
   impact: { area: string; description: string },
   projectName: string
 ): string {
-  return `You are a UI/UX designer. You are given a screenshot of a screen from "${projectName}" and a UI change to apply.
+  return `You are an expert UI/UX designer. You are given a screenshot of a screen from "${projectName}" and a specific UI/UX change to apply to it.
 
-**Screen:** ${impact.area}
+**Screen / Area:** ${impact.area}
 **Change to implement:** ${impact.description}
 
-Produce a SHORT, self-contained HTML page that shows only the MODIFIED version of this screen with the change clearly visible.
+## YOUR TASK
+Reproduce the FULL screen as an HTML page, applying the described change. Then visually highlight the changed element(s) so they are immediately obvious.
 
-Rules (CRITICAL — follow strictly to stay within token limits):
-- Output ONLY the HTML. No JSON wrapper, no markdown fences, no prose.
-- Use a single <style> block in <head> — keep CSS minimal and concise (max ~40 rules)
-- Do NOT use external fonts, CDN links, or base64 images
-- Focus the layout on the key changed area — you don't need to recreate every pixel of the original
-- Use simple, readable HTML: divs, tables, forms, buttons — whatever matches the screen type
-- Max ~150 lines of HTML total
-- Start your response directly with <!DOCTYPE html>`;
+## HIGHLIGHTING RULES (mandatory)
+- Every element you added or modified MUST be highlighted with a red annotation
+- Use a red dashed border: \`outline: 3px dashed #ef4444; outline-offset: 4px;\`
+- Add a small red label badge positioned near the changed element:
+  \`<span style="position:absolute;top:-22px;left:0;background:#ef4444;color:white;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;white-space:nowrap;">NEW</span>\`
+- Wrap the changed element in a \`position:relative\` container so the badge positions correctly
+- Do NOT highlight unchanged elements
+
+## HTML RULES
+- Output ONLY raw HTML — no JSON, no markdown fences, no prose before or after
+- Start directly with \`<!DOCTYPE html>\`
+- Use a \`<style>\` block in \`<head>\` for all CSS — no inline styles except for the highlight annotations
+- Do NOT use external fonts, CDN links, or images (use placeholder colored divs/icons if needed)
+- Reproduce the full page layout: header/nav, sidebar if present, main content, footer
+- Use realistic placeholder data (labels, names, amounts) consistent with the original screenshot
+- Keep the visual style consistent with the original (colors, spacing, typography feel)`;
 }

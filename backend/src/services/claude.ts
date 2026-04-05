@@ -81,7 +81,7 @@ export async function callClaudeForHtml(prompt: string, imageBlock: ImageBlock):
     const message = await anthropic.messages.create(
       {
         model: MODEL,
-        max_tokens: 8192,
+        max_tokens: 16000,
         messages: [
           { role: 'user', content },
           // Prefill to force Claude to start directly with the HTML
