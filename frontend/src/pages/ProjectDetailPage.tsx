@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
   Play, Loader2, RefreshCw, Trash2,
   Clock, CheckCircle2, AlertCircle, FileText, History,
-  Pencil, X, Check, ShieldAlert
+  Pencil, X, Check
 } from 'lucide-react';
 import type { ProjectDetail, Analysis, FileBucket } from '../types';
 import { projectsApi, analysisApi, parseAnalysisResult } from '../services/api';
@@ -195,14 +195,7 @@ export default function ProjectDetailPage() {
               >
                 <Pencil size={14} /> Edit
               </button>
-              <Link
-                to={`/projects/${id}/risk-assessment`}
-                className="btn-secondary text-sm"
-                title="Risk Assessment"
-              >
-                <ShieldAlert size={14} /> Risk Assessment
-              </Link>
-              <button
+<button
                 className="btn-primary"
                 onClick={handleAnalyze}
                 disabled={hasRunningAnalysis || fileCount === 0}
