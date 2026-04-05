@@ -55,6 +55,11 @@ export async function callClaude(prompt: string): Promise<AnalysisResult> {
  * Calls Claude with a focused prompt + a single image, returning only the generated HTML string.
  * Used for per-impact prototype generation (HTML is then rendered to PNG via Puppeteer).
  */
+/**
+ * Calls Claude with a focused prompt + a single image, returning raw HTML.
+ * Claude is instructed to return HTML directly (no JSON wrapper) to avoid truncation.
+ * Used for per-impact prototype generation (HTML is then rendered to PNG via Puppeteer).
+ */
 export async function callClaudeForHtml(prompt: string, imageBlock: ImageBlock): Promise<string> {
   const anthropic = getClient();
   const controller = new AbortController();
@@ -77,7 +82,11 @@ export async function callClaudeForHtml(prompt: string, imageBlock: ImageBlock):
       {
         model: MODEL,
         max_tokens: 8192,
-        messages: [{ role: 'user', content }],
+        messages: [
+          { role: 'user', content },
+          // Prefill to force Claude to start directly with the HTML
+          { role: 'assistant', content: '<!DOCTYPE html>' },
+        ],
       },
       { signal: controller.signal }
     );
@@ -89,18 +98,24 @@ export async function callClaudeForHtml(prompt: string, imageBlock: ImageBlock):
       .map(b => b.text)
       .join('');
 
-    let cleaned = rawText.trim();
-    if (cleaned.startsWith('```')) {
-      cleaned = cleaned.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    // Claude continues from the prefill, so prepend it back
+    let html = '<!DOCTYPE html>' + rawText;
+
+    // Strip any accidental markdown fences
+    if (html.includes('```')) {
+      html = html.replace(/```[a-z]*\n?/g, '').replace(/```/g, '');
     }
 
-    const parsed = JSON.parse(cleaned) as { prototypeHtml?: string };
-    if (!parsed.prototypeHtml) throw new Error('Claude did not return prototypeHtml');
-    return parsed.prototypeHtml;
+    // If truncated (no closing </html>), close it gracefully
+    if (!html.includes('</html>')) {
+      html += '\n</body></html>';
+    }
+
+    return html.trim();
   } catch (err: unknown) {
     clearTimeout(timeout);
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Claude API request timed out after 2 minutes');
+      throw new Error('Claude API request timed out');
     }
     throw err;
   }

@@ -107,29 +107,19 @@ export function buildImpactPrototypePrompt(
   impact: { area: string; description: string },
   projectName: string
 ): string {
-  return `You are an expert UI/UX designer and frontend developer.
+  return `You are a UI/UX designer. You are given a screenshot of a screen from "${projectName}" and a UI change to apply.
 
-You have been given:
-1. A screenshot of the CURRENT (as-is) screen: "${impact.area}" for the project "${projectName}"
-2. A specific UI/UX impact that must be implemented on this screen
+**Screen:** ${impact.area}
+**Change to implement:** ${impact.description}
 
-## IMPACT TO IMPLEMENT
-**Screen / Area:** ${impact.area}
-**Change Required:** ${impact.description}
+Produce a SHORT, self-contained HTML page that shows only the MODIFIED version of this screen with the change clearly visible.
 
-## YOUR TASK
-Generate a complete, self-contained HTML prototype of the MODIFIED version of this screen that implements the described change.
-
-The prototype must:
-- Visually incorporate the described change clearly
-- Maintain the general layout and style of the original screen where not affected
-- Use inline CSS only (no external dependencies, no CDN links)
-- Be a complete HTML document with <html>, <head>, <body> tags
-- Use a clean, professional design consistent with modern web applications
-- Include realistic placeholder data and labels
-
-Return your response **exclusively as valid JSON** with this exact schema:
-{ "prototypeHtml": "string — complete self-contained HTML document" }
-
-No prose, no markdown fences, just the raw JSON object.`;
+Rules (CRITICAL — follow strictly to stay within token limits):
+- Output ONLY the HTML. No JSON wrapper, no markdown fences, no prose.
+- Use a single <style> block in <head> — keep CSS minimal and concise (max ~40 rules)
+- Do NOT use external fonts, CDN links, or base64 images
+- Focus the layout on the key changed area — you don't need to recreate every pixel of the original
+- Use simple, readable HTML: divs, tables, forms, buttons — whatever matches the screen type
+- Max ~150 lines of HTML total
+- Start your response directly with <!DOCTYPE html>`;
 }
