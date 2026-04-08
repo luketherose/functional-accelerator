@@ -1,4 +1,4 @@
-import { ProjectFile } from '../types';
+import type { ProjectFile } from '../types';
 
 export interface ImageBlock {
   type: 'image';
@@ -25,7 +25,7 @@ export async function buildAnalysisPrompt(
     if (fileList.length === 0) return `### ${sectionTitle}\n_No documents uploaded._\n`;
     return `### ${sectionTitle}\n` + fileList.map(f => {
       const text = f.extracted_text
-        ? `\n**File:** ${f.original_name}\n\`\`\`\n${f.extracted_text.slice(0, 10_000)}\n\`\`\``
+        ? `\n**File:** ${f.original_name}\n\`\`\`\n${f.extracted_text.slice(0, 30_000)}\n\`\`\``
         : `\n**File:** ${f.original_name} (${f.mime_type}) — [no extractable text, provided as reference]`;
       return text;
     }).join('\n\n---\n\n');
@@ -141,4 +141,52 @@ Reproduce the FULL screen as an HTML page, applying the described change. Then v
 - Reproduce the full page layout: header/nav, sidebar if present, main content, footer
 - Use realistic placeholder data (labels, names, amounts) consistent with the original screenshot
 - Keep the visual style consistent with the original (colors, spacing, typography feel)`;
+}
+
+/**
+ * Builds the system prompt for a per-impact deep-dive conversation.
+ * All project files are embedded as context so Claude can cite exact passages.
+ */
+export function buildDeepDiveSystemPrompt(
+  project: { name: string; description: string },
+  files: ProjectFile[],
+  impact: { area: string; description: string }
+): string {
+  const asisFiles = files.filter(f => f.bucket === 'as-is');
+  const tobeFiles = files.filter(f => f.bucket === 'to-be');
+  const brFiles = files.filter(f => f.bucket === 'business-rules');
+
+  const formatFiles = (fileList: ProjectFile[], title: string): string => {
+    if (fileList.length === 0) return `### ${title}\n_No documents uploaded._\n`;
+    return `### ${title}\n` + fileList.map(f =>
+      f.extracted_text
+        ? `\n**${f.original_name}**\n\`\`\`\n${f.extracted_text.slice(0, 30_000)}\n\`\`\``
+        : `\n**${f.original_name}** (${f.mime_type}) — [no extractable text]`
+    ).join('\n\n');
+  };
+
+  const brSection = brFiles.length > 0 ? `\n${formatFiles(brFiles, 'Business Rules')}` : '';
+
+  return `You are an expert functional analyst for the project "${project.name}".${project.description ? `\nProject context: ${project.description}` : ''}
+
+You are answering questions about a specific functional/UI impact identified in the analysis:
+
+**Impact area:** ${impact.area}
+**Impact description:** ${impact.description}
+
+Your goal is to provide precise, document-grounded answers. When relevant, cite the exact paragraph or passage from the documentation below.
+
+## PROJECT DOCUMENTATION
+
+${formatFiles(asisFiles, 'AS-IS Documentation (Current State)')}
+
+${formatFiles(tobeFiles, 'TO-BE Documentation (Target Requirements)')}
+${brSection}
+
+## GUIDELINES
+- Be precise and cite exact text from the documents when possible
+- Clearly distinguish between AS-IS (current) and TO-BE (target) behaviour
+- If the documents are insufficient to answer, say so explicitly and explain what is missing
+- Answer in the same language the user writes in
+- Keep answers focused on the specific impact area above; if the user asks something unrelated, gently redirect`;
 }

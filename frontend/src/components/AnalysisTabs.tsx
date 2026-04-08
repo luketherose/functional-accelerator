@@ -7,6 +7,7 @@ import {
   HelpCircle, Lightbulb, AlertTriangle, TrendingUp, ChevronDown, ChevronUp
 } from 'lucide-react';
 import ImpactPrototype from './ImpactPrototype';
+import ImpactDeepDive from './ImpactDeepDive';
 
 interface AnalysisTabsProps {
   result: AnalysisResult;
@@ -76,6 +77,7 @@ function ScreenCard({ screen }: { screen: AffectedScreen }) {
 export default function AnalysisTabs({ result, projectId, analysisId }: AnalysisTabsProps) {
   const [activeTab, setActiveTab] = useState<TabId>('summary');
   const [expandedImpactId, setExpandedImpactId] = useState<string | null>(null);
+  const [expandedFuncId, setExpandedFuncId] = useState<string | null>(null);
 
   return (
     <div className="flex flex-col h-full">
@@ -161,11 +163,36 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
         {/* Functional Impacts */}
         {activeTab === 'functional' && (
           <div className="space-y-3 max-w-3xl">
-            <p className="text-sm text-text-muted">{result.functionalImpacts.length} functional impacts identified</p>
+            <p className="text-sm text-text-muted">{result.functionalImpacts.length} functional impacts identified — click an impact to deep dive with Claude</p>
             {result.functionalImpacts.length === 0 ? (
               <div className="card p-8 text-center text-text-muted text-sm">No functional impacts recorded.</div>
             ) : (
-              result.functionalImpacts.map(impact => <ImpactCard key={impact.id} impact={impact} />)
+              result.functionalImpacts.map(impact => {
+                const isExpanded = expandedFuncId === impact.id;
+                return (
+                  <div key={impact.id} className="card overflow-hidden">
+                    <button
+                      className="w-full p-4 text-left hover:bg-surface-hover transition-colors"
+                      onClick={() => setExpandedFuncId(isExpanded ? null : impact.id)}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs text-text-muted bg-surface px-1.5 py-0.5 rounded">{impact.id}</span>
+                          <span className="text-sm font-semibold text-text-primary">{impact.area}</span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <SeverityBadge severity={impact.severity} />
+                          {isExpanded ? <ChevronUp size={14} className="text-text-muted" /> : <ChevronDown size={14} className="text-text-muted" />}
+                        </div>
+                      </div>
+                      <p className="text-sm text-text-secondary leading-relaxed mt-2">{impact.description}</p>
+                    </button>
+                    <div className={isExpanded ? 'px-4 pb-4' : 'hidden'}>
+                      <ImpactDeepDive impact={impact} projectId={projectId} analysisId={analysisId} />
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
         )}
@@ -200,6 +227,7 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
                     {/* Always mounted to preserve state during generation — hidden when collapsed */}
                     <div className={isExpanded ? 'px-4 pb-4' : 'hidden'}>
                       <ImpactPrototype impact={impact} projectId={projectId} analysisId={analysisId} />
+                      <ImpactDeepDive impact={impact} projectId={projectId} analysisId={analysisId} />
                     </div>
                   </div>
                 );

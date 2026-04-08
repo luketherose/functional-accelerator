@@ -161,6 +161,46 @@ export async function callClaudeJson<T = Record<string, unknown>>(prompt: string
   }
 }
 
+/**
+ * Multi-turn chat with a system prompt. Used for per-impact deep-dive conversations.
+ */
+export async function callClaudeChat(
+  systemPrompt: string,
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+): Promise<string> {
+  if (process.env.CLAUDE_MOCK === 'true') {
+    return 'This is a mock deep-dive response. In production, Claude will answer based on all project documents. Enable real mode by setting CLAUDE_MOCK=false and providing a valid ANTHROPIC_API_KEY.';
+  }
+
+  const anthropic = getClient();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+  try {
+    const message = await anthropic.messages.create(
+      {
+        model: MODEL,
+        max_tokens: 4096,
+        system: systemPrompt,
+        messages,
+      },
+      { signal: controller.signal }
+    );
+    clearTimeout(timeout);
+
+    return message.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map(b => b.text)
+      .join('');
+  } catch (err: unknown) {
+    clearTimeout(timeout);
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Claude API request timed out');
+    }
+    throw err;
+  }
+}
+
 function parseClaudeResponse(raw: string): AnalysisResult {
   let cleaned = raw.trim();
   if (cleaned.startsWith('```')) {

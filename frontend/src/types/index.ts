@@ -93,6 +93,11 @@ export interface RiskAssessmentResult {
   overallRiskLevel: 'high' | 'medium' | 'low';
 }
 
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export interface AnalysisResult {
   executiveSummary: string;
   functionalImpacts: Impact[];
