@@ -58,7 +58,13 @@ ${brSection}
 
 ## YOUR TASK
 
-Analyze the provided documentation and produce a complete, structured functional analysis.
+Produce a **DELTA analysis** — identify only what CHANGES when moving from the AS-IS state to the TO-BE requirements.
+
+⚠️ CRITICAL DELTA RULE (strictly enforced):
+- Every item in \`functionalImpacts\`, \`uiUxImpacts\`, \`affectedScreens\`, and \`proposedChanges\` MUST describe something that is **different** between AS-IS and TO-BE.
+- Do NOT include features, behaviours, or screens that already exist in AS-IS and are NOT modified by TO-BE.
+- Each impact description MUST explicitly state: what exists today (AS-IS) and what will change (TO-BE).
+- If no TO-BE documentation is provided, state this clearly in \`executiveSummary\` and leave impact arrays empty — do not invent changes.
 
 Return your response **exclusively as valid JSON** — no markdown code fences, no prose before or after, just the raw JSON object.
 
@@ -67,16 +73,16 @@ Use this exact schema:
 {
   "executiveSummary": "string — 3-5 sentence summary of what changes and why${hasBrFiles ? '. Explicitly mention which business rules were provided vs inferred.' : ''}",
   "functionalImpacts": [
-    { "id": "FI-01", "area": "string", "description": "string", "severity": "high|medium|low" }
+    { "id": "FI-01", "area": "string", "description": "string — must describe the delta: what changes from AS-IS to TO-BE", "severity": "high|medium|low" }
   ],
   "uiUxImpacts": [
-    { "id": "UX-01", "area": "string", "description": "string", "severity": "high|medium|low" }
+    { "id": "UX-01", "area": "string", "description": "string — must describe the delta: what changes from AS-IS to TO-BE", "severity": "high|medium|low" }
   ],
   "affectedScreens": [
     {
       "name": "string",
-      "currentBehavior": "string",
-      "proposedBehavior": "string",
+      "currentBehavior": "string — what the screen does TODAY (AS-IS)",
+      "proposedBehavior": "string — what the screen will do AFTER the change (TO-BE)",
       "changeType": "modified|new|removed"
     }
   ],
@@ -84,17 +90,16 @@ Use this exact schema:
     { "id": "BR-01", "description": "string", "source": "${hasBrFiles ? 'provided|as-is|to-be|inferred' : 'as-is|to-be|inferred'}" }
   ],
   "proposedChanges": [
-    { "screen": "string", "change": "string", "priority": "high|medium|low" }
+    { "screen": "string", "change": "string — the specific modification required, not existing behaviour", "priority": "high|medium|low" }
   ],
   "assumptions": ["string"],
   "openQuestions": ["string"]
 }
 
 Requirements:
-- functionalImpacts must have at least 3 items if there is enough context
-- uiUxImpacts must have at least 2 items if there is enough context
+- Only include impacts for genuine AS-IS → TO-BE changes; omit existing unchanged functionality
 - Keep descriptions concise (2-3 sentences max per item)
-${hasBrFiles ? `- For businessRulesExtracted: include ALL provided business rules with source "provided". Do NOT re-state them differently. Then add any ADDITIONAL rules you infer from context with source "inferred".\n` : ''}- If minimal context is provided, still produce the best analysis possible with clear assumptions
+${hasBrFiles ? '- For businessRulesExtracted: include ALL provided business rules with source "provided". Do NOT re-state them differently. Then add any ADDITIONAL rules you infer from context with source "inferred".\n' : ''}- If context is insufficient to identify real deltas, explain what is missing in \`openQuestions\`
 
 Respond with JSON only.`;
 }
@@ -105,13 +110,18 @@ Respond with JSON only.`;
  */
 export function buildImpactPrototypePrompt(
   impact: { area: string; description: string },
-  projectName: string
+  projectName: string,
+  userPrompt?: string
 ): string {
+  const userGuidance = userPrompt?.trim()
+    ? `\n## ADDITIONAL INSTRUCTIONS FROM USER\n${userPrompt.trim()}\n`
+    : '';
+
   return `You are an expert UI/UX designer. You are given a screenshot of a screen from "${projectName}" and a specific UI/UX change to apply to it.
 
 **Screen / Area:** ${impact.area}
 **Change to implement:** ${impact.description}
-
+${userGuidance}
 ## YOUR TASK
 Reproduce the FULL screen as an HTML page, applying the described change. Then visually highlight the changed element(s) so they are immediately obvious.
 

@@ -18,6 +18,7 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
   const [isDragging, setIsDragging] = useState(false);
+  const [userPrompt, setUserPrompt] = useState('');
   const previewUrlRef = useRef<string | null>(null);
 
   // Load existing prototype on mount
@@ -51,7 +52,7 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
     setError('');
     try {
       const data = await analysisApi.generateImpactPrototype(
-        projectId, analysisId, impact.id, impact.area, impact.description, file
+        projectId, analysisId, impact.id, impact.area, impact.description, file, userPrompt
       );
       setImageData(data.image_data);
       setFile(null);
@@ -91,6 +92,7 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
     handleFileInput(e);
     setImageData(null);
     setAsIsPreview(null);
+    setUserPrompt('');
   };
 
   if (loading) {
@@ -133,6 +135,17 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
               </button>
             </div>
           )}
+
+          <div>
+            <label className="label text-[10px]">Additional instructions <span className="text-text-muted font-normal">(optional)</span></label>
+            <textarea
+              className="input text-xs resize-none"
+              rows={3}
+              placeholder="e.g. Use a blue color scheme, add a confirmation modal, move the button to the top-right…"
+              value={userPrompt}
+              onChange={e => setUserPrompt(e.target.value)}
+            />
+          </div>
 
           <button
             onClick={handleGenerate}

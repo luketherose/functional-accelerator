@@ -88,7 +88,8 @@ export default function ProjectDetailPage() {
       await analysisApi.run(id);
       setActiveSection('analysis');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to start analysis';
+      const axErr = err as { response?: { data?: { error?: string } }; message?: string };
+      const msg = axErr?.response?.data?.error ?? axErr?.message ?? 'Failed to start analysis';
       alert(msg);
       setIsAnalyzing(false);
     }

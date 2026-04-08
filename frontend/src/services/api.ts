@@ -73,13 +73,15 @@ export const analysisApi = {
     impactId: string,
     impactArea: string,
     impactDescription: string,
-    file: File
+    file: File,
+    userPrompt?: string
   ) => {
     const form = new FormData();
     form.append('file', file);
     form.append('impactId', impactId);
     form.append('impactArea', impactArea);
     form.append('impactDescription', impactDescription);
+    if (userPrompt?.trim()) form.append('userPrompt', userPrompt.trim());
     return api.post<{ id: string; impact_id: string; image_data: string; created_at: string }>(
       `/api/analysis/${projectId}/${analysisId}/impact-prototype`,
       form,

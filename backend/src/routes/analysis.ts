@@ -100,10 +100,11 @@ router.post('/:projectId/:analysisId/impact-prototype', tmpUpload.single('file')
 
     if (!req.file) return res.status(400).json({ error: 'No image file uploaded' });
 
-    const { impactId, impactArea, impactDescription } = req.body as {
+    const { impactId, impactArea, impactDescription, userPrompt } = req.body as {
       impactId: string;
       impactArea: string;
       impactDescription: string;
+      userPrompt?: string;
     };
     if (!impactId || !impactArea || !impactDescription) {
       return res.status(400).json({ error: 'impactId, impactArea, and impactDescription are required' });
@@ -115,7 +116,7 @@ router.post('/:projectId/:analysisId/impact-prototype', tmpUpload.single('file')
     const { data, mediaType } = readImageAsBase64(req.file.path, req.file.mimetype);
     const imageBlock = { type: 'image' as const, source: { type: 'base64' as const, media_type: mediaType, data } };
 
-    const prompt = buildImpactPrototypePrompt({ area: impactArea, description: impactDescription }, project.name);
+    const prompt = buildImpactPrototypePrompt({ area: impactArea, description: impactDescription }, project.name, userPrompt);
     console.log(`[analysis] Generating HTML prototype for impact ${impactId}...`);
     const html = await callClaudeForHtml(prompt, imageBlock);
 
