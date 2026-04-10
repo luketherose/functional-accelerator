@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage } from '../types';
+import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -66,6 +66,21 @@ export const analysisApi = {
     api.get<{ id: string; impact_id: string; image_data: string; created_at: string }>(
       `/api/analysis/${projectId}/${analysisId}/impact-prototype/${encodeURIComponent(impactId)}`
     ).then(r => r.data),
+
+  listFeedback: (projectId: string, analysisId: string) =>
+    api.get<ImpactFeedback[]>(`/api/analysis/${projectId}/${analysisId}/feedback`).then(r => r.data),
+
+  saveFeedback: (
+    projectId: string,
+    analysisId: string,
+    impactId: string,
+    sentiment: 'positive' | 'negative',
+    motivation?: string
+  ) =>
+    api.post<ImpactFeedback>(`/api/analysis/${projectId}/${analysisId}/feedback`, { impactId, sentiment, motivation }).then(r => r.data),
+
+  deleteFeedback: (projectId: string, analysisId: string, impactId: string) =>
+    api.delete(`/api/analysis/${projectId}/${analysisId}/feedback/${encodeURIComponent(impactId)}`).then(r => r.data),
 
   impactDeepDive: (
     projectId: string,

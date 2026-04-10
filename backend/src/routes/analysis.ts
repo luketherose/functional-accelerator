@@ -4,11 +4,21 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import db from '../db';
-import { buildAnalysisPrompt, buildImpactPrototypePrompt, buildDeepDiveSystemPrompt } from '../services/promptBuilder';
-import { callClaude, callClaudeForHtml, callClaudeChat } from '../services/claude';
+import { buildImpactPrototypePrompt, buildDeepDiveSystemPrompt } from '../services/promptBuilder';
+import { callClaudeForHtml, callClaudeChat } from '../services/claude';
+import { runAnalysisPipeline } from '../services/pipeline';
 import { readImageAsBase64 } from '../services/fileParsing';
 import { renderHtmlToPng } from '../services/imageRenderer';
 import type { ProjectFile } from '../types';
+
+interface ImpactFeedbackRow {
+  id: string;
+  analysis_id: string;
+  impact_id: string;
+  sentiment: 'positive' | 'negative';
+  motivation: string | null;
+  created_at: string;
+}
 
 const router = Router();
 
@@ -77,9 +87,17 @@ router.post('/:projectId/run', async (req: Request, res: Response) => {
     db.prepare(`INSERT INTO analyses (id, project_id, version_name, status) VALUES (?, ?, ?, 'running')`).run(analysisId, projectId, versionName);
     db.prepare(`UPDATE projects SET status = 'analyzing', updated_at = datetime('now') WHERE id = ?`).run(projectId);
 
+    // Load feedback from the most recent completed analysis for this project
+    const prevAnalysis = db.prepare(
+      "SELECT id FROM analyses WHERE project_id = ? AND status = 'done' ORDER BY created_at DESC LIMIT 1"
+    ).get(projectId) as { id: string } | undefined;
+    const prevFeedback = prevAnalysis
+      ? (db.prepare('SELECT * FROM impact_feedback WHERE analysis_id = ?').all(prevAnalysis.id) as ImpactFeedbackRow[])
+      : [];
+
     res.status(202).json({ analysisId, versionName, status: 'running' });
 
-    runAnalysisAsync(analysisId, projectId, project, files).catch((err) => {
+    runAnalysisAsync(analysisId, projectId, project, files, prevFeedback).catch((err) => {
       console.error('[analysis] Async error:', err);
     });
 
@@ -150,18 +168,31 @@ async function runAnalysisAsync(
   analysisId: string,
   projectId: string,
   project: { name: string; description: string },
-  files: ProjectFile[]
+  files: ProjectFile[],
+  prevFeedback: ImpactFeedbackRow[] = []
 ) {
+  const brCount = files.filter(f => f.bucket === 'business-rules').length;
+  const inputSummary = `Project: ${project.name} | Files: ${files.length} (${files.filter(f => f.bucket === 'as-is').length} as-is, ${files.filter(f => f.bucket === 'to-be').length} to-be${brCount > 0 ? `, ${brCount} BR` : ''})`;
+
+  const setProgress = (step: string) => {
+    db.prepare("UPDATE analyses SET progress_step = ? WHERE id = ?").run(step, analysisId);
+  };
+
   try {
-    const prompt = await buildAnalysisPrompt(project, files);
-    const brCount = files.filter(f => f.bucket === 'business-rules').length;
-    const inputSummary = `Project: ${project.name} | Files: ${files.length} (${files.filter(f => f.bucket === 'as-is').length} as-is, ${files.filter(f => f.bucket === 'to-be').length} to-be${brCount > 0 ? `, ${brCount} BR` : ''})`;
+    console.log(`[analysis] Running pipeline ${analysisId} — ${inputSummary}`);
 
-    console.log(`[analysis] Running ${analysisId} — ${inputSummary}`);
+    const resultJson = await runAnalysisPipeline(project, files, {
+      onProgress: setProgress,
+      prevFeedback: prevFeedback.map(f => ({
+        impact_id: f.impact_id,
+        sentiment: f.sentiment,
+        motivation: f.motivation,
+      })),
+    });
 
-    const resultJson = await callClaude(prompt);
-
-    db.prepare(`UPDATE analyses SET status = 'done', input_summary = ?, result_json = ? WHERE id = ?`).run(inputSummary, JSON.stringify(resultJson), analysisId);
+    db.prepare(
+      "UPDATE analyses SET status = 'done', input_summary = ?, result_json = ?, progress_step = NULL WHERE id = ?"
+    ).run(inputSummary, JSON.stringify(resultJson), analysisId);
     db.prepare(`UPDATE projects SET status = 'done', updated_at = datetime('now') WHERE id = ?`).run(projectId);
     console.log(`[analysis] Completed ${analysisId}`);
 
@@ -169,10 +200,59 @@ async function runAnalysisAsync(
     const msg = err instanceof Error ? err.message : 'Analysis failed';
     console.error(`[analysis] Failed ${analysisId}:`, msg);
 
-    db.prepare(`UPDATE analyses SET status = 'error', error_message = ? WHERE id = ?`).run(msg, analysisId);
+    db.prepare("UPDATE analyses SET status = 'error', error_message = ?, progress_step = NULL WHERE id = ?").run(msg, analysisId);
     db.prepare(`UPDATE projects SET status = 'error', updated_at = datetime('now') WHERE id = ?`).run(projectId);
   }
 }
+
+// GET /api/analysis/:projectId/:analysisId/feedback
+router.get('/:projectId/:analysisId/feedback', (req: Request, res: Response) => {
+  try {
+    const rows = db.prepare('SELECT * FROM impact_feedback WHERE analysis_id = ?').all(req.params.analysisId);
+    res.json(rows);
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch feedback' });
+  }
+});
+
+// POST /api/analysis/:projectId/:analysisId/feedback — upsert one impact's feedback
+router.post('/:projectId/:analysisId/feedback', async (req: Request, res: Response) => {
+  const { impactId, sentiment, motivation } = req.body as {
+    impactId: string;
+    sentiment: 'positive' | 'negative';
+    motivation?: string;
+  };
+  if (!impactId || !['positive', 'negative'].includes(sentiment)) {
+    return res.status(400).json({ error: 'impactId and sentiment (positive|negative) are required' });
+  }
+  try {
+    const existing = db.prepare('SELECT id FROM impact_feedback WHERE analysis_id = ? AND impact_id = ?')
+      .get(req.params.analysisId, impactId) as { id: string } | undefined;
+    if (existing) {
+      db.prepare("UPDATE impact_feedback SET sentiment = ?, motivation = ?, created_at = datetime('now') WHERE id = ?")
+        .run(sentiment, motivation ?? null, existing.id);
+    } else {
+      db.prepare('INSERT INTO impact_feedback (id, analysis_id, impact_id, sentiment, motivation) VALUES (?, ?, ?, ?, ?)')
+        .run(uuidv4(), req.params.analysisId, impactId, sentiment, motivation ?? null);
+    }
+    const row = db.prepare('SELECT * FROM impact_feedback WHERE analysis_id = ? AND impact_id = ?')
+      .get(req.params.analysisId, impactId);
+    res.json(row);
+  } catch {
+    res.status(500).json({ error: 'Failed to save feedback' });
+  }
+});
+
+// DELETE /api/analysis/:projectId/:analysisId/feedback/:impactId — remove feedback for one impact
+router.delete('/:projectId/:analysisId/feedback/:impactId', (req: Request, res: Response) => {
+  try {
+    db.prepare('DELETE FROM impact_feedback WHERE analysis_id = ? AND impact_id = ?')
+      .run(req.params.analysisId, req.params.impactId);
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ error: 'Failed to delete feedback' });
+  }
+});
 
 // POST /api/analysis/:projectId/:analysisId/impact-deepdive
 router.post('/:projectId/:analysisId/impact-deepdive', async (req: Request, res: Response) => {

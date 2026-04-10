@@ -1,0 +1,270 @@
+/**
+ * Multi-step functional analysis pipeline.
+ *
+ * Replaces the single-shot prompt with a four-step evidence-based process:
+ *
+ *   Step 1 — Extract AS-IS functional catalog
+ *   Step 2 — Extract TO-BE functional catalog
+ *   Step 3 — Evidence-based comparison + delta detection
+ *   Step 4 — Synthesise final AnalysisResult
+ *
+ * Between steps 3 and 4 a lightweight verification pass checks whether each
+ * delta's evidence quote actually appears in the source text (string match).
+ * Unverifiable quotes are downgraded to UNCERTAIN rather than silently kept.
+ */
+
+import type { ProjectFile, AnalysisResult } from '../types';
+import type { ImpactFeedback } from './promptBuilder';
+import {
+  buildExtractionSystemPrompt,
+  buildExtractionUserPrompt,
+  buildComparisonSystemPrompt,
+  buildComparisonUserPrompt,
+  buildSynthesisSystemPrompt,
+  buildSynthesisUserPrompt,
+  type FunctionalCatalog,
+  type ComparisonResult,
+  type Delta,
+} from './promptBuilder';
+import { callClaudeStep } from './claude';
+import { chunkDocument, formatAllChunks, formatChunksAsContext } from './chunking';
+import { retrieveTopChunks, mergeChunkLists, verifyQuoteInChunks, retrieveBySection } from './retrieval';
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+export interface PipelineOptions {
+  /** Called at each step transition so the route can persist progress to DB. */
+  onProgress?: (step: string) => void;
+  prevFeedback?: ImpactFeedback[];
+}
+
+// ─── Mock fixture ────────────────────────────────────────────────────────────
+
+function mockResult(): AnalysisResult {
+  return {
+    executiveSummary:
+      '[MOCK] This is a placeholder analysis. Set CLAUDE_MOCK=false and provide an ANTHROPIC_API_KEY for real results.',
+    functionalImpacts: [
+      { id: 'FI-01', area: 'Mock Area', description: 'Mock functional impact.', severity: 'low' },
+    ],
+    uiUxImpacts: [],
+    affectedScreens: [],
+    businessRulesExtracted: [],
+    proposedChanges: [],
+    prototypeInstructions: '',
+    prototypeHtml: '',
+    assumptions: ['Running in mock mode — no real analysis was performed.'],
+    openQuestions: [],
+  };
+}
+
+// ─── Context helpers ─────────────────────────────────────────────────────────
+
+const EXTRACTION_CHAR_BUDGET = 130_000; // ~32 k tokens, well within 200 k context
+const COMPARISON_CHUNKS_PER_SIDE = 20;  // chunks to retrieve for evidence verification
+
+function buildExtractionContext(files: ProjectFile[], charBudget: number): string {
+  if (files.length === 0) return '_No documents uploaded._';
+
+  // Chunk each file and collect all chunks
+  const allChunks = files.flatMap(f =>
+    f.extracted_text
+      ? chunkDocument(f.extracted_text, f.original_name, f.bucket)
+      : []
+  );
+
+  return formatAllChunks(allChunks, 'Documents', charBudget);
+}
+
+/**
+ * For the comparison step we want the most relevant source passages so Claude
+ * can verify evidence quotes without being overwhelmed by the full corpus.
+ * We use a dual-retrieval strategy: keyword scoring + structural (section path).
+ */
+function buildComparisonContext(
+  asisCatalog: FunctionalCatalog,
+  files: ProjectFile[],
+  bucket: 'as-is' | 'to-be'
+): string {
+  const bucketFiles = files.filter(f => f.bucket === bucket);
+  if (bucketFiles.length === 0) return '_No documents._';
+
+  const allChunks = bucketFiles.flatMap(f =>
+    f.extracted_text
+      ? chunkDocument(f.extracted_text, f.original_name, f.bucket)
+      : []
+  );
+
+  // Build a combined query from all area names + key fields in the catalog
+  const query = asisCatalog.areas
+    .flatMap(a => [a.name, ...a.keyFields, ...a.businessRules.slice(0, 2)])
+    .join(' ');
+
+  // Keyword retrieval
+  const byKeyword = retrieveTopChunks(allChunks, query, COMPARISON_CHUNKS_PER_SIDE);
+
+  // Structural retrieval — section names that match area names
+  const sectionKeywords = asisCatalog.areas.map(a => a.name);
+  const bySection = retrieveBySection(allChunks, sectionKeywords);
+
+  const merged = mergeChunkLists(byKeyword, bySection).slice(0, COMPARISON_CHUNKS_PER_SIDE + 10);
+
+  return formatChunksAsContext(merged, `${bucket.toUpperCase()} Source Passages`);
+}
+
+// ─── Verification pass ───────────────────────────────────────────────────────
+
+/**
+ * Verifies each delta's evidence quotes against the actual source chunks.
+ * Marks evidence as verified=false (and downgrades confidence) when a quote
+ * cannot be found in any source chunk.
+ *
+ * Deltas where NEITHER side's evidence is verifiable are downgraded to UNCERTAIN.
+ */
+function verifyDeltas(deltas: Delta[], files: ProjectFile[]): Delta[] {
+  const asisChunks = files
+    .filter(f => f.bucket === 'as-is' && f.extracted_text)
+    .flatMap(f => chunkDocument(f.extracted_text!, f.original_name, f.bucket));
+
+  const tobeChunks = files
+    .filter(f => f.bucket === 'to-be' && f.extracted_text)
+    .flatMap(f => chunkDocument(f.extracted_text!, f.original_name, f.bucket));
+
+  return deltas.map(delta => {
+    let asIsEvidence = delta.asIsEvidence;
+    let toBeEvidence = delta.toBeEvidence;
+    let confidence = delta.confidence;
+    let changeType = delta.changeType;
+
+    if (asIsEvidence?.quote) {
+      const found = verifyQuoteInChunks(asIsEvidence.quote, asisChunks);
+      asIsEvidence = { ...asIsEvidence, verified: found };
+      if (!found) confidence = Math.max(0, confidence - 0.25);
+    }
+
+    if (toBeEvidence?.quote) {
+      const found = verifyQuoteInChunks(toBeEvidence.quote, tobeChunks);
+      toBeEvidence = { ...toBeEvidence, verified: found };
+      if (!found) confidence = Math.max(0, confidence - 0.25);
+    }
+
+    // If neither side can be verified and the delta claims a change, downgrade
+    const asIsVerified = asIsEvidence?.verified ?? true;
+    const toBeVerified = toBeEvidence?.verified ?? true;
+    if (!asIsVerified && !toBeVerified && changeType !== 'UNCHANGED') {
+      changeType = 'UNCERTAIN';
+      confidence = Math.min(confidence, 0.3);
+    }
+
+    return {
+      ...delta,
+      asIsEvidence,
+      toBeEvidence,
+      changeType,
+      confidence,
+      needsHumanReview: delta.needsHumanReview || confidence < 0.7,
+    };
+  });
+}
+
+// ─── Pipeline ────────────────────────────────────────────────────────────────
+
+export async function runAnalysisPipeline(
+  project: { name: string; description: string },
+  files: ProjectFile[],
+  options: PipelineOptions = {}
+): Promise<AnalysisResult> {
+  const { onProgress, prevFeedback = [] } = options;
+
+  // ── Mock mode ──────────────────────────────────────────────────────────────
+  if (process.env.CLAUDE_MOCK === 'true') {
+    onProgress?.('Mock mode — returning fixture data');
+    return mockResult();
+  }
+
+  const asisFiles = files.filter(f => f.bucket === 'as-is');
+  const tobeFiles = files.filter(f => f.bucket === 'to-be');
+  const brFiles = files.filter(f => f.bucket === 'business-rules');
+
+  // ── Step 1: Extract AS-IS catalog ─────────────────────────────────────────
+  onProgress?.('Step 1/4 — Extracting AS-IS functional catalog…');
+  console.log('[pipeline] Step 1: AS-IS extraction');
+
+  const asisContext = buildExtractionContext(asisFiles, EXTRACTION_CHAR_BUDGET);
+  const asisCatalog = await callClaudeStep<FunctionalCatalog>(
+    buildExtractionSystemPrompt(),
+    buildExtractionUserPrompt('AS-IS', asisContext),
+    0.1,
+    32000
+  );
+  console.log(`[pipeline] AS-IS catalog: ${asisCatalog.areas?.length ?? 0} areas`);
+
+  // ── Step 2: Extract TO-BE catalog ─────────────────────────────────────────
+  onProgress?.('Step 2/4 — Extracting TO-BE functional catalog…');
+  console.log('[pipeline] Step 2: TO-BE extraction');
+
+  // Include business rules with the TO-BE context so they are properly captured
+  const tobeContextFiles = [...tobeFiles, ...brFiles];
+  const tobeContext = buildExtractionContext(tobeContextFiles, EXTRACTION_CHAR_BUDGET);
+  const tobeCatalog = await callClaudeStep<FunctionalCatalog>(
+    buildExtractionSystemPrompt(),
+    buildExtractionUserPrompt('TO-BE', tobeContext),
+    0.1,
+    32000
+  );
+  console.log(`[pipeline] TO-BE catalog: ${tobeCatalog.areas?.length ?? 0} areas`);
+
+  // ── Step 3: Evidence-based comparison ─────────────────────────────────────
+  onProgress?.('Step 3/4 — Comparing functional areas and detecting deltas…');
+  console.log('[pipeline] Step 3: Comparison');
+
+  // Retrieve the most relevant source passages for each side
+  const asisEvidenceContext = buildComparisonContext(tobeCatalog, files, 'as-is');
+  const tobeEvidenceContext = buildComparisonContext(asisCatalog, files, 'to-be');
+
+  const comparison = await callClaudeStep<ComparisonResult>(
+    buildComparisonSystemPrompt(),
+    buildComparisonUserPrompt(asisCatalog, tobeCatalog, asisEvidenceContext, tobeEvidenceContext),
+    0.1,
+    32000
+  );
+  const rawDeltas: Delta[] = comparison.deltas ?? [];
+  console.log(`[pipeline] Raw deltas: ${rawDeltas.length}`);
+
+  // ── Verification pass (no Claude call — string matching) ──────────────────
+  onProgress?.('Step 3/4 — Verifying evidence…');
+  const verifiedDeltas = verifyDeltas(rawDeltas, files);
+  const unverified = verifiedDeltas.filter(d => d.needsHumanReview).length;
+  console.log(`[pipeline] Verified deltas: ${verifiedDeltas.length} (${unverified} need human review)`);
+
+  // Propagate any coverage warning from comparison step
+  const coverageWarning = comparison.coverageMetrics?.coverageWarning ?? null;
+
+  // ── Step 4: Synthesise final report ───────────────────────────────────────
+  onProgress?.('Step 4/4 — Synthesising final report…');
+  console.log('[pipeline] Step 4: Synthesis');
+
+  // Only send actionable deltas to synthesis (skip UNCHANGED to save tokens)
+  const actionableDeltas = verifiedDeltas.filter(d => d.changeType !== 'UNCHANGED');
+
+  const result = await callClaudeStep<AnalysisResult>(
+    buildSynthesisSystemPrompt(),
+    buildSynthesisUserPrompt(project, actionableDeltas, coverageWarning, prevFeedback),
+    0.2,
+    32000
+  );
+
+  // Normalise to ensure all arrays are present
+  return {
+    executiveSummary: result.executiveSummary || 'No summary produced.',
+    functionalImpacts: Array.isArray(result.functionalImpacts) ? result.functionalImpacts : [],
+    uiUxImpacts: Array.isArray(result.uiUxImpacts) ? result.uiUxImpacts : [],
+    affectedScreens: Array.isArray(result.affectedScreens) ? result.affectedScreens : [],
+    businessRulesExtracted: Array.isArray(result.businessRulesExtracted) ? result.businessRulesExtracted : [],
+    proposedChanges: Array.isArray(result.proposedChanges) ? result.proposedChanges : [],
+    prototypeInstructions: result.prototypeInstructions || '',
+    prototypeHtml: result.prototypeHtml || '',
+    assumptions: Array.isArray(result.assumptions) ? result.assumptions : [],
+    openQuestions: Array.isArray(result.openQuestions) ? result.openQuestions : [],
+  };
+}

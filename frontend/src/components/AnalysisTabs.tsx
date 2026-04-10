@@ -1,13 +1,15 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type {
-  AnalysisResult, Impact, AffectedScreen, BusinessRule, ProposedChange
+  AnalysisResult, Impact, AffectedScreen, BusinessRule, ProposedChange, ImpactFeedback
 } from '../types';
 import {
   FileText, Layers, Monitor, BookOpen,
-  HelpCircle, Lightbulb, AlertTriangle, TrendingUp, ChevronDown, ChevronUp
+  HelpCircle, Lightbulb, AlertTriangle, TrendingUp, ChevronDown, ChevronUp,
+  ThumbsUp, ThumbsDown
 } from 'lucide-react';
 import ImpactPrototype from './ImpactPrototype';
 import ImpactDeepDive from './ImpactDeepDive';
+import { analysisApi } from '../services/api';
 
 interface AnalysisTabsProps {
   result: AnalysisResult;
@@ -27,21 +29,144 @@ const TABS: { id: TabId; label: string; icon: typeof FileText }[] = [
 
 function SeverityBadge({ severity }: { severity: string }) {
   const cls = severity === 'high' ? 'badge-high' : severity === 'medium' ? 'badge-medium' : 'badge-low';
-  const label = severity.charAt(0).toUpperCase() + severity.slice(1);
-  return <span className={`badge ${cls}`}>{label}</span>;
+  return <span className={`badge ${cls}`}>{severity.charAt(0).toUpperCase() + severity.slice(1)}</span>;
 }
 
-function ImpactCard({ impact }: { impact: Impact }) {
+// --- Feedback thumb buttons ---
+interface FeedbackBarProps {
+  impactId: string;
+  projectId: string;
+  analysisId: string;
+  feedback: ImpactFeedback | undefined;
+  onSaved: (f: ImpactFeedback) => void;
+  onDeleted: (impactId: string) => void;
+}
+
+function FeedbackBar({ impactId, projectId, analysisId, feedback, onSaved, onDeleted }: FeedbackBarProps) {
+  const [showMotivation, setShowMotivation] = useState(false);
+  const [motivation, setMotivation] = useState(feedback?.motivation ?? '');
+  const [saving, setSaving] = useState(false);
+
+  async function handleThumb(sentiment: 'positive' | 'negative') {
+    if (feedback?.sentiment === sentiment) {
+      // toggle off
+      await analysisApi.deleteFeedback(projectId, analysisId, impactId);
+      onDeleted(impactId);
+      setShowMotivation(false);
+      return;
+    }
+    setShowMotivation(sentiment === 'negative');
+    if (sentiment === 'positive') {
+      setSaving(true);
+      const saved = await analysisApi.saveFeedback(projectId, analysisId, impactId, 'positive', undefined);
+      onSaved(saved);
+      setSaving(false);
+    }
+  }
+
+  async function handleSaveMotivation() {
+    setSaving(true);
+    const saved = await analysisApi.saveFeedback(projectId, analysisId, impactId, 'negative', motivation || undefined);
+    onSaved(saved);
+    setSaving(false);
+    setShowMotivation(false);
+  }
+
+  const isPositive = feedback?.sentiment === 'positive';
+  const isNegative = feedback?.sentiment === 'negative';
+
   return (
-    <div className="card p-4 space-y-2 hover:shadow-card-hover transition-shadow">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-xs text-text-muted bg-surface px-1.5 py-0.5 rounded">{impact.id}</span>
-          <span className="text-sm font-semibold text-text-primary">{impact.area}</span>
-        </div>
-        <SeverityBadge severity={impact.severity} />
+    <div className="mt-3 space-y-2" onClick={e => e.stopPropagation()}>
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-text-muted">Feedback:</span>
+        <button
+          onClick={() => handleThumb('positive')}
+          disabled={saving}
+          title="Mark as correct"
+          className={`p-1.5 rounded-lg border transition-colors ${isPositive ? 'bg-emerald-50 border-emerald-300 text-emerald-600' : 'border-surface-border text-text-muted hover:text-emerald-600 hover:border-emerald-200'}`}
+        >
+          <ThumbsUp size={13} />
+        </button>
+        <button
+          onClick={() => handleThumb('negative')}
+          disabled={saving}
+          title="Mark as incorrect"
+          className={`p-1.5 rounded-lg border transition-colors ${isNegative ? 'bg-red-50 border-red-300 text-red-500' : 'border-surface-border text-text-muted hover:text-red-500 hover:border-red-200'}`}
+        >
+          <ThumbsDown size={13} />
+        </button>
+        {isNegative && feedback?.motivation && (
+          <span className="text-xs text-text-muted italic truncate max-w-xs">"{feedback.motivation}"</span>
+        )}
+        {isPositive && <span className="text-xs text-emerald-600">Confirmed correct</span>}
       </div>
-      <p className="text-sm text-text-secondary leading-relaxed">{impact.description}</p>
+      {showMotivation && (
+        <div className="flex gap-2 items-end">
+          <textarea
+            className="input text-xs resize-none flex-1"
+            rows={2}
+            placeholder="Why is this impact wrong or inaccurate? (optional — but helps the next re-run)"
+            value={motivation}
+            onChange={e => setMotivation(e.target.value)}
+          />
+          <button onClick={handleSaveMotivation} disabled={saving} className="btn-primary text-xs py-1.5 px-3 shrink-0 self-end">
+            Save
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Expandable impact card (shared for both functional and UI/UX) ---
+interface ExpandableImpactCardProps {
+  impact: Impact;
+  projectId: string;
+  analysisId: string;
+  isExpanded: boolean;
+  onToggle: () => void;
+  feedback: ImpactFeedback | undefined;
+  onFeedbackSaved: (f: ImpactFeedback) => void;
+  onFeedbackDeleted: (impactId: string) => void;
+  children?: React.ReactNode;
+}
+
+function ExpandableImpactCard({
+  impact, projectId, analysisId, isExpanded, onToggle,
+  feedback, onFeedbackSaved, onFeedbackDeleted, children
+}: ExpandableImpactCardProps) {
+  const borderColor = feedback?.sentiment === 'positive'
+    ? 'border-l-4 border-l-emerald-400'
+    : feedback?.sentiment === 'negative'
+    ? 'border-l-4 border-l-red-400'
+    : '';
+
+  return (
+    <div className={`card overflow-hidden ${borderColor}`}>
+      <button className="w-full p-4 text-left hover:bg-surface-hover transition-colors" onClick={onToggle}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs text-text-muted bg-surface px-1.5 py-0.5 rounded">{impact.id}</span>
+            <span className="text-sm font-semibold text-text-primary">{impact.area}</span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <SeverityBadge severity={impact.severity} />
+            {isExpanded ? <ChevronUp size={14} className="text-text-muted" /> : <ChevronDown size={14} className="text-text-muted" />}
+          </div>
+        </div>
+        <p className="text-sm text-text-secondary leading-relaxed mt-2">{impact.description}</p>
+        <FeedbackBar
+          impactId={impact.id}
+          projectId={projectId}
+          analysisId={analysisId}
+          feedback={feedback}
+          onSaved={onFeedbackSaved}
+          onDeleted={onFeedbackDeleted}
+        />
+      </button>
+      <div className={isExpanded ? 'px-4 pb-4' : 'hidden'}>
+        {children}
+      </div>
     </div>
   );
 }
@@ -76,8 +201,29 @@ function ScreenCard({ screen }: { screen: AffectedScreen }) {
 
 export default function AnalysisTabs({ result, projectId, analysisId }: AnalysisTabsProps) {
   const [activeTab, setActiveTab] = useState<TabId>('summary');
-  const [expandedImpactId, setExpandedImpactId] = useState<string | null>(null);
-  const [expandedFuncId, setExpandedFuncId] = useState<string | null>(null);
+  const [expandedFuncIds, setExpandedFuncIds] = useState<Set<string>>(new Set());
+  const [expandedUiIds, setExpandedUiIds] = useState<Set<string>>(new Set());
+  const [feedbackMap, setFeedbackMap] = useState<Map<string, ImpactFeedback>>(new Map());
+
+  useEffect(() => {
+    analysisApi.listFeedback(projectId, analysisId)
+      .then(list => setFeedbackMap(new Map(list.map(f => [f.impact_id, f]))))
+      .catch(() => {});
+  }, [projectId, analysisId]);
+
+  function toggleFunc(id: string) {
+    setExpandedFuncIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  }
+  function toggleUi(id: string) {
+    setExpandedUiIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  }
+
+  function handleFeedbackSaved(f: ImpactFeedback) {
+    setFeedbackMap(prev => new Map(prev).set(f.impact_id, f));
+  }
+  function handleFeedbackDeleted(impactId: string) {
+    setFeedbackMap(prev => { const next = new Map(prev); next.delete(impactId); return next; });
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -100,13 +246,12 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
 
         {/* Executive Summary */}
         {activeTab === 'summary' && (
-          <div className="space-y-6 max-w-3xl">
+          <div className="space-y-6 w-full">
             <div className="card p-6">
               <h3 className="text-sm font-semibold text-text-muted uppercase tracking-wide mb-3">Overview</h3>
               <p className="text-text-secondary leading-relaxed">{result.executiveSummary}</p>
             </div>
 
-            {/* Stats row */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {[
                 { label: 'Functional Impacts', value: result.functionalImpacts.length, color: 'text-blue-600' },
@@ -121,7 +266,6 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
               ))}
             </div>
 
-            {/* Assumptions */}
             {result.assumptions.length > 0 && (
               <div className="card p-5">
                 <div className="flex items-center gap-2 mb-3">
@@ -139,7 +283,6 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
               </div>
             )}
 
-            {/* Business Rules */}
             {result.businessRulesExtracted.length > 0 && (
               <div className="card p-5">
                 <div className="flex items-center gap-2 mb-3">
@@ -162,79 +305,59 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
 
         {/* Functional Impacts */}
         {activeTab === 'functional' && (
-          <div className="space-y-3 max-w-3xl">
-            <p className="text-sm text-text-muted">{result.functionalImpacts.length} functional impacts identified — click an impact to deep dive with Claude</p>
+          <div className="space-y-3 w-full">
+            <p className="text-sm text-text-muted">
+              {result.functionalImpacts.length} functional impacts identified — click to expand, thumbs to give feedback
+            </p>
             {result.functionalImpacts.length === 0 ? (
               <div className="card p-8 text-center text-text-muted text-sm">No functional impacts recorded.</div>
             ) : (
-              result.functionalImpacts.map(impact => {
-                const isExpanded = expandedFuncId === impact.id;
-                return (
-                  <div key={impact.id} className="card overflow-hidden">
-                    <button
-                      className="w-full p-4 text-left hover:bg-surface-hover transition-colors"
-                      onClick={() => setExpandedFuncId(isExpanded ? null : impact.id)}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs text-text-muted bg-surface px-1.5 py-0.5 rounded">{impact.id}</span>
-                          <span className="text-sm font-semibold text-text-primary">{impact.area}</span>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <SeverityBadge severity={impact.severity} />
-                          {isExpanded ? <ChevronUp size={14} className="text-text-muted" /> : <ChevronDown size={14} className="text-text-muted" />}
-                        </div>
-                      </div>
-                      <p className="text-sm text-text-secondary leading-relaxed mt-2">{impact.description}</p>
-                    </button>
-                    <div className={isExpanded ? 'px-4 pb-4' : 'hidden'}>
-                      <ImpactDeepDive impact={impact} projectId={projectId} analysisId={analysisId} />
-                    </div>
-                  </div>
-                );
-              })
+              result.functionalImpacts.map(impact => (
+                <ExpandableImpactCard
+                  key={impact.id}
+                  impact={impact}
+                  projectId={projectId}
+                  analysisId={analysisId}
+                  isExpanded={expandedFuncIds.has(impact.id)}
+                  onToggle={() => toggleFunc(impact.id)}
+                  feedback={feedbackMap.get(impact.id)}
+                  onFeedbackSaved={handleFeedbackSaved}
+                  onFeedbackDeleted={handleFeedbackDeleted}
+                >
+                  <ImpactDeepDive impact={impact} projectId={projectId} analysisId={analysisId} />
+                </ExpandableImpactCard>
+              ))
             )}
           </div>
         )}
 
         {/* UI/UX Impacts */}
         {activeTab === 'uiux' && (
-          <div className="space-y-3 max-w-3xl">
-            <p className="text-sm text-text-muted">{result.uiUxImpacts.length} UI/UX impacts identified — click an impact to generate a prototype</p>
+          <div className="space-y-3 w-full">
+            <p className="text-sm text-text-muted">
+              {result.uiUxImpacts.length} UI/UX impacts identified — click to expand prototype + deep dive
+            </p>
             {result.uiUxImpacts.length === 0 ? (
               <div className="card p-8 text-center text-text-muted text-sm">No UI/UX impacts recorded.</div>
             ) : (
-              result.uiUxImpacts.map((impact: Impact) => {
-                const isExpanded = expandedImpactId === impact.id;
-                return (
-                  <div key={impact.id} className="card overflow-hidden">
-                    <button
-                      className="w-full p-4 text-left hover:bg-surface-hover transition-colors"
-                      onClick={() => setExpandedImpactId(isExpanded ? null : impact.id)}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs text-text-muted bg-surface px-1.5 py-0.5 rounded">{impact.id}</span>
-                          <span className="text-sm font-semibold text-text-primary">{impact.area}</span>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <SeverityBadge severity={impact.severity} />
-                          {isExpanded ? <ChevronUp size={14} className="text-text-muted" /> : <ChevronDown size={14} className="text-text-muted" />}
-                        </div>
-                      </div>
-                      <p className="text-sm text-text-secondary leading-relaxed mt-2">{impact.description}</p>
-                    </button>
-                    {/* Always mounted to preserve state during generation — hidden when collapsed */}
-                    <div className={isExpanded ? 'px-4 pb-4' : 'hidden'}>
-                      <ImpactPrototype impact={impact} projectId={projectId} analysisId={analysisId} />
-                      <ImpactDeepDive impact={impact} projectId={projectId} analysisId={analysisId} />
-                    </div>
-                  </div>
-                );
-              })
+              result.uiUxImpacts.map((impact: Impact) => (
+                <ExpandableImpactCard
+                  key={impact.id}
+                  impact={impact}
+                  projectId={projectId}
+                  analysisId={analysisId}
+                  isExpanded={expandedUiIds.has(impact.id)}
+                  onToggle={() => toggleUi(impact.id)}
+                  feedback={feedbackMap.get(impact.id)}
+                  onFeedbackSaved={handleFeedbackSaved}
+                  onFeedbackDeleted={handleFeedbackDeleted}
+                >
+                  <ImpactPrototype impact={impact} projectId={projectId} analysisId={analysisId} />
+                  <ImpactDeepDive impact={impact} projectId={projectId} analysisId={analysisId} />
+                </ExpandableImpactCard>
+              ))
             )}
 
-            {/* Proposed changes table */}
             {result.proposedChanges.length > 0 && (
               <div className="card overflow-hidden mt-6">
                 <div className="px-4 py-3 border-b border-surface-border">
@@ -265,7 +388,7 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
 
         {/* Affected Screens */}
         {activeTab === 'screens' && (
-          <div className="space-y-3 max-w-3xl">
+          <div className="space-y-3 w-full">
             <p className="text-sm text-text-muted">{result.affectedScreens.length} screens affected</p>
             {result.affectedScreens.length === 0 ? (
               <div className="card p-8 text-center text-text-muted text-sm">No affected screens recorded.</div>
@@ -277,7 +400,7 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
 
         {/* Open Questions */}
         {activeTab === 'questions' && (
-          <div className="space-y-3 max-w-2xl">
+          <div className="space-y-3 w-full">
             {result.openQuestions.length === 0 ? (
               <div className="card p-8 text-center text-text-muted text-sm">No open questions.</div>
             ) : (

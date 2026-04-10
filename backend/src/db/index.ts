@@ -48,6 +48,7 @@ db.exec(`
     input_summary TEXT,
     result_json TEXT,
     error_message TEXT,
+    progress_step TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
   );
@@ -73,7 +74,25 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS impact_feedback (
+    id TEXT PRIMARY KEY,
+    analysis_id TEXT NOT NULL,
+    impact_id TEXT NOT NULL,
+    sentiment TEXT NOT NULL CHECK(sentiment IN ('positive', 'negative')),
+    motivation TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE,
+    UNIQUE(analysis_id, impact_id)
+  );
 `);
+
+// --- Migration: add progress_step to analyses if missing ---
+const analysesCols = db.prepare("PRAGMA table_info(analyses)").all() as { name: string }[];
+if (analysesCols.length > 0 && !analysesCols.find(c => c.name === 'progress_step')) {
+  console.log('[DB] Adding progress_step column to analyses...');
+  db.exec('ALTER TABLE analyses ADD COLUMN progress_step TEXT');
+}
 
 // --- Migration: recreate impact_prototypes if it uses old 'html' column ---
 const cols = db.prepare("PRAGMA table_info(impact_prototypes)").all() as { name: string }[];

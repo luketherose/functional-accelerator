@@ -36,6 +36,7 @@ export interface Analysis {
   input_summary: string | null;
   result_json: string | null;
   error_message: string | null;
+  progress_step: string | null;
   created_at: string;
 }
 
@@ -91,6 +92,15 @@ export interface RiskAssessmentResult {
   riskAreas: { area: string; riskLevel: 'high' | 'medium' | 'low'; rationale: string; recommendation: string }[];
   patterns: string[];
   overallRiskLevel: 'high' | 'medium' | 'low';
+}
+
+export interface ImpactFeedback {
+  id: string;
+  analysis_id: string;
+  impact_id: string;
+  sentiment: 'positive' | 'negative';
+  motivation: string | null;
+  created_at: string;
 }
 
 export interface ChatMessage {

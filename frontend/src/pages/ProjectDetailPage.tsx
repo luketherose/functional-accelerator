@@ -10,6 +10,7 @@ import { projectsApi, analysisApi, parseAnalysisResult } from '../services/api';
 import FileUploader from '../components/FileUploader';
 import FileList from '../components/FileList';
 import AnalysisTabs from '../components/AnalysisTabs';
+import AnalysisProgress from '../components/AnalysisProgress';
 import PageHeader from '../components/Layout/PageHeader';
 
 function formatDate(iso: string) {
@@ -297,6 +298,9 @@ export default function ProjectDetailPage() {
                         <Clock size={9} />
                         {formatDate(analysis.created_at)}
                       </div>
+                      {analysis.status === 'running' && analysis.progress_step && (
+                        <p className="text-[10px] text-amber-600 mt-1 truncate">{analysis.progress_step}</p>
+                      )}
                       {analysis.status === 'error' && analysis.error_message && (
                         <p className="text-[10px] text-red-500 mt-1 truncate">{analysis.error_message}</p>
                       )}
@@ -313,17 +317,15 @@ export default function ProjectDetailPage() {
 
         {/* Right panel — Analysis result */}
         <div className="flex-1 overflow-hidden flex flex-col">
-          {hasRunningAnalysis && !analysisResult && (
-            <div className="flex-1 flex flex-col items-center justify-center gap-4 text-text-muted animate-fade-in">
-              <div className="w-16 h-16 rounded-2xl bg-brand-50 flex items-center justify-center">
-                <Loader2 size={26} className="animate-spin text-purple-deep" />
-              </div>
-              <div className="text-center">
-                <p className="text-sm font-medium text-text-primary">Analyzing your documentation…</p>
-                <p className="text-xs text-text-muted mt-1">Claude is processing your files. This may take up to 2 minutes.</p>
-              </div>
-            </div>
-          )}
+          {hasRunningAnalysis && !analysisResult && (() => {
+            const running = project.analyses.find((a: Analysis) => a.status === 'running');
+            return (
+              <AnalysisProgress
+                progressStep={running?.progress_step ?? null}
+                startedAt={running?.created_at ?? new Date().toISOString()}
+              />
+            );
+          })()}
 
           {!hasRunningAnalysis && !selectedAnalysis && (
             <div className="flex-1 flex flex-col items-center justify-center gap-4 text-text-muted">
