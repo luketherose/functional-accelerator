@@ -85,6 +85,22 @@ db.exec(`
     FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE,
     UNIQUE(analysis_id, impact_id)
   );
+
+  CREATE TABLE IF NOT EXISTS file_chunks (
+    id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    bucket TEXT NOT NULL,
+    section_path TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL,
+    word_count INTEGER NOT NULL DEFAULT 0,
+    embedding BLOB,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_file_chunks_project_bucket
+    ON file_chunks(project_id, bucket);
 `);
 
 // --- Migration: add progress_step to analyses if missing ---

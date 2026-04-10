@@ -183,6 +183,7 @@ async function runAnalysisAsync(
 
     const resultJson = await runAnalysisPipeline(project, files, {
       onProgress: setProgress,
+      projectId,
       prevFeedback: prevFeedback.map(f => ({
         impact_id: f.impact_id,
         sentiment: f.sentiment,

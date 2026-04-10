@@ -322,7 +322,6 @@ export default function ProjectDetailPage() {
             return (
               <AnalysisProgress
                 progressStep={running?.progress_step ?? null}
-                startedAt={running?.created_at ?? new Date().toISOString()}
               />
             );
           })()}

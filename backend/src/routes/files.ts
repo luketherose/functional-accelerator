@@ -5,6 +5,7 @@ import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../db';
 import { parseFile } from '../services/fileParsing';
+import { indexFile, deleteFileChunks } from '../services/vectorStore';
 import { FileBucket } from '../types';
 
 const router = Router();
@@ -100,6 +101,14 @@ router.post('/:projectId/upload', upload.single('file'), async (req: Request, re
 
     const fileRecord = db.prepare('SELECT * FROM files WHERE id = ?').get(id);
     res.status(201).json(fileRecord);
+
+    // Index chunks in background — don't block the upload response
+    const originalName = req.file.originalname;
+    const projectId = req.params.projectId as string;
+    if (extractedText) {
+      indexFile(id, projectId, bucket, originalName, extractedText)
+        .catch(err => console.error('[files] Indexing failed for', originalName, err));
+    }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Upload failed';
     res.status(500).json({ error: msg });
@@ -113,6 +122,7 @@ router.delete('/:projectId/:fileId', (req: Request, res: Response) => {
     if (!file) return res.status(404).json({ error: 'File not found' });
 
     try { fs.unlinkSync(file.path); } catch (_) {}
+    deleteFileChunks(req.params.fileId as string);
     db.prepare('DELETE FROM files WHERE id = ?').run(req.params.fileId);
 
     res.json({ success: true });

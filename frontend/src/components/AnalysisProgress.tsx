@@ -72,19 +72,19 @@ function fmtSeconds(s: number): string {
 
 interface Props {
   progressStep: string | null;
-  startedAt: string; // ISO — analysis created_at used as start anchor
 }
 
-export default function AnalysisProgress({ progressStep, startedAt }: Props) {
+export default function AnalysisProgress({ progressStep }: Props) {
   const [elapsed, setElapsed] = useState(0);
 
+  // Start the timer from 0 at mount — avoids showing a stale elapsed
+  // time if the user refreshes mid-analysis.
   useEffect(() => {
-    const start = new Date(startedAt).getTime();
-    const tick = () => setElapsed(Math.floor((Date.now() - start) / 1000));
-    tick();
+    const mountedAt = Date.now();
+    const tick = () => setElapsed(Math.floor((Date.now() - mountedAt) / 1000));
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [startedAt]);
+  }, []);
 
   const currentStep = parseStepNumber(progressStep);
   const remaining = Math.max(0, TOTAL_SECONDS - elapsed);

@@ -1,16 +1,18 @@
 /**
- * Multi-step functional analysis pipeline.
+ * Multi-step functional analysis pipeline — RAG edition.
  *
- * Replaces the single-shot prompt with a four-step evidence-based process:
- *
- *   Step 1 — Extract AS-IS functional catalog
- *   Step 2 — Extract TO-BE functional catalog
+ *   Step 1 — Extract AS-IS functional catalog  (RAG retrieval → prompt)
+ *   Step 2 — Extract TO-BE functional catalog  (RAG retrieval → prompt)
  *   Step 3 — Evidence-based comparison + delta detection
+ *   Step 3b— Verification pass (string match, no Claude call)
  *   Step 4 — Synthesise final AnalysisResult
  *
- * Between steps 3 and 4 a lightweight verification pass checks whether each
- * delta's evidence quote actually appears in the source text (string match).
- * Unverifiable quotes are downgraded to UNCERTAIN rather than silently kept.
+ * Context strategy:
+ *   • If the project has indexed chunks (file_chunks table), we use semantic
+ *     search (Voyage AI embeddings + cosine similarity) to select the most
+ *     relevant passages for each step.
+ *   • If no chunks are indexed yet (files uploaded before RAG was introduced),
+ *     we fall back to the original full-text extraction path so nothing breaks.
  */
 
 import type { ProjectFile, AnalysisResult } from '../types';
@@ -29,6 +31,13 @@ import {
 import { callClaudeStep } from './claude';
 import { chunkDocument, formatAllChunks, formatChunksAsContext } from './chunking';
 import { retrieveTopChunks, mergeChunkLists, verifyQuoteInChunks, retrieveBySection } from './retrieval';
+import {
+  hasIndexedChunks,
+  multiQuerySearch,
+  formatRetrievedChunks,
+  semanticSearch,
+} from './vectorStore';
+import type { FileBucket } from '../types';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -36,6 +45,8 @@ export interface PipelineOptions {
   /** Called at each step transition so the route can persist progress to DB. */
   onProgress?: (step: string) => void;
   prevFeedback?: ImpactFeedback[];
+  /** Project ID — needed for RAG vector store lookup. */
+  projectId?: string;
 }
 
 // ─── Mock fixture ────────────────────────────────────────────────────────────
@@ -60,29 +71,75 @@ function mockResult(): AnalysisResult {
 
 // ─── Context helpers ─────────────────────────────────────────────────────────
 
-const EXTRACTION_CHAR_BUDGET = 130_000; // ~32 k tokens, well within 200 k context
-const COMPARISON_CHUNKS_PER_SIDE = 20;  // chunks to retrieve for evidence verification
+const EXTRACTION_CHAR_BUDGET = 130_000; // fallback: full-text budget
+const COMPARISON_CHUNKS_PER_SIDE = 20;
+const RAG_TOP_K_EXTRACTION = 40;   // chunks per query for extraction steps
+const RAG_TOP_K_COMPARISON = 25;   // chunks per query for comparison evidence
 
-function buildExtractionContext(files: ProjectFile[], charBudget: number): string {
+/**
+ * RAG-based extraction context.
+ * Builds query topics from the bucket name + generic functional keywords,
+ * then retrieves the top-K most relevant chunks.
+ */
+async function buildExtractionContextRAG(
+  projectId: string,
+  bucket: FileBucket,
+  charBudget = EXTRACTION_CHAR_BUDGET
+): Promise<string> {
+  // Broad queries to pull the main functional areas from the document
+  const queries = [
+    `functional requirements ${bucket}`,
+    'business rules and processes',
+    'user roles and permissions',
+    'data fields and validation',
+    'system integrations and APIs',
+    'workflow and approval processes',
+    'notifications and communications',
+  ];
+
+  const chunks = await multiQuerySearch(projectId, bucket, queries, RAG_TOP_K_EXTRACTION);
+  if (chunks.length === 0) return '_No indexed content found._';
+
+  return formatRetrievedChunks(chunks, `${bucket.toUpperCase()} Documents`, charBudget);
+}
+
+/**
+ * Fallback: full-text extraction context (no vector store).
+ */
+function buildExtractionContextFallback(files: ProjectFile[], charBudget: number): string {
   if (files.length === 0) return '_No documents uploaded._';
-
-  // Chunk each file and collect all chunks
   const allChunks = files.flatMap(f =>
-    f.extracted_text
-      ? chunkDocument(f.extracted_text, f.original_name, f.bucket)
-      : []
+    f.extracted_text ? chunkDocument(f.extracted_text, f.original_name, f.bucket) : []
   );
-
   return formatAllChunks(allChunks, 'Documents', charBudget);
 }
 
 /**
- * For the comparison step we want the most relevant source passages so Claude
- * can verify evidence quotes without being overwhelmed by the full corpus.
- * We use a dual-retrieval strategy: keyword scoring + structural (section path).
+ * RAG-based comparison context.
+ * Uses the catalog areas as targeted queries to retrieve the most relevant
+ * evidence passages for the comparison step.
  */
-function buildComparisonContext(
-  asisCatalog: FunctionalCatalog,
+async function buildComparisonContextRAG(
+  projectId: string,
+  catalog: FunctionalCatalog,
+  bucket: FileBucket,
+  charBudget = EXTRACTION_CHAR_BUDGET
+): Promise<string> {
+  const queries = catalog.areas.flatMap(a => [
+    a.name,
+    ...a.keyFields.slice(0, 2),
+    ...a.businessRules.slice(0, 1),
+  ]).filter(Boolean).slice(0, 20); // cap at 20 queries
+
+  const chunks = await multiQuerySearch(projectId, bucket, queries, RAG_TOP_K_COMPARISON);
+  return formatRetrievedChunks(chunks, `${bucket.toUpperCase()} Source Passages`, charBudget);
+}
+
+/**
+ * Fallback: BM25 keyword comparison context (no vector store).
+ */
+function buildComparisonContextFallback(
+  catalog: FunctionalCatalog,
   files: ProjectFile[],
   bucket: 'as-is' | 'to-be'
 ): string {
@@ -90,23 +147,15 @@ function buildComparisonContext(
   if (bucketFiles.length === 0) return '_No documents._';
 
   const allChunks = bucketFiles.flatMap(f =>
-    f.extracted_text
-      ? chunkDocument(f.extracted_text, f.original_name, f.bucket)
-      : []
+    f.extracted_text ? chunkDocument(f.extracted_text, f.original_name, f.bucket) : []
   );
 
-  // Build a combined query from all area names + key fields in the catalog
-  const query = asisCatalog.areas
+  const query = catalog.areas
     .flatMap(a => [a.name, ...a.keyFields, ...a.businessRules.slice(0, 2)])
     .join(' ');
 
-  // Keyword retrieval
   const byKeyword = retrieveTopChunks(allChunks, query, COMPARISON_CHUNKS_PER_SIDE);
-
-  // Structural retrieval — section names that match area names
-  const sectionKeywords = asisCatalog.areas.map(a => a.name);
-  const bySection = retrieveBySection(allChunks, sectionKeywords);
-
+  const bySection = retrieveBySection(allChunks, catalog.areas.map(a => a.name));
   const merged = mergeChunkLists(byKeyword, bySection).slice(0, COMPARISON_CHUNKS_PER_SIDE + 10);
 
   return formatChunksAsContext(merged, `${bucket.toUpperCase()} Source Passages`);
@@ -174,7 +223,7 @@ export async function runAnalysisPipeline(
   files: ProjectFile[],
   options: PipelineOptions = {}
 ): Promise<AnalysisResult> {
-  const { onProgress, prevFeedback = [] } = options;
+  const { onProgress, prevFeedback = [], projectId } = options;
 
   // ── Mock mode ──────────────────────────────────────────────────────────────
   if (process.env.CLAUDE_MOCK === 'true') {
@@ -186,11 +235,18 @@ export async function runAnalysisPipeline(
   const tobeFiles = files.filter(f => f.bucket === 'to-be');
   const brFiles = files.filter(f => f.bucket === 'business-rules');
 
+  // ── Decide retrieval strategy ──────────────────────────────────────────────
+  const useRAG = projectId ? hasIndexedChunks(projectId) : false;
+  console.log(`[pipeline] Retrieval strategy: ${useRAG ? 'RAG (vector store)' : 'fallback (full-text)'}`);
+
   // ── Step 1: Extract AS-IS catalog ─────────────────────────────────────────
   onProgress?.('Step 1/4 — Extracting AS-IS functional catalog…');
   console.log('[pipeline] Step 1: AS-IS extraction');
 
-  const asisContext = buildExtractionContext(asisFiles, EXTRACTION_CHAR_BUDGET);
+  const asisContext = useRAG && projectId
+    ? await buildExtractionContextRAG(projectId, 'as-is')
+    : buildExtractionContextFallback(asisFiles, EXTRACTION_CHAR_BUDGET);
+
   const asisCatalog = await callClaudeStep<FunctionalCatalog>(
     buildExtractionSystemPrompt(),
     buildExtractionUserPrompt('AS-IS', asisContext),
@@ -203,9 +259,26 @@ export async function runAnalysisPipeline(
   onProgress?.('Step 2/4 — Extracting TO-BE functional catalog…');
   console.log('[pipeline] Step 2: TO-BE extraction');
 
-  // Include business rules with the TO-BE context so they are properly captured
-  const tobeContextFiles = [...tobeFiles, ...brFiles];
-  const tobeContext = buildExtractionContext(tobeContextFiles, EXTRACTION_CHAR_BUDGET);
+  let tobeContext: string;
+  if (useRAG && projectId) {
+    // Retrieve TO-BE and business-rules buckets separately, then merge
+    const [tobeChunks, brChunks] = await Promise.all([
+      multiQuerySearch(projectId, 'to-be', [
+        'functional requirements to-be', 'business rules', 'new processes',
+        'user roles permissions', 'data fields validation', 'system integrations',
+      ], RAG_TOP_K_EXTRACTION),
+      multiQuerySearch(projectId, 'business-rules', [
+        'business rules', 'constraints', 'eligibility', 'validation rules',
+      ], 20),
+    ]);
+    const combined = [...tobeChunks, ...brChunks]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, RAG_TOP_K_EXTRACTION);
+    tobeContext = formatRetrievedChunks(combined, 'TO-BE + Business Rules Documents', EXTRACTION_CHAR_BUDGET);
+  } else {
+    tobeContext = buildExtractionContextFallback([...tobeFiles, ...brFiles], EXTRACTION_CHAR_BUDGET);
+  }
+
   const tobeCatalog = await callClaudeStep<FunctionalCatalog>(
     buildExtractionSystemPrompt(),
     buildExtractionUserPrompt('TO-BE', tobeContext),
@@ -219,8 +292,15 @@ export async function runAnalysisPipeline(
   console.log('[pipeline] Step 3: Comparison');
 
   // Retrieve the most relevant source passages for each side
-  const asisEvidenceContext = buildComparisonContext(tobeCatalog, files, 'as-is');
-  const tobeEvidenceContext = buildComparisonContext(asisCatalog, files, 'to-be');
+  const [asisEvidenceContext, tobeEvidenceContext] = useRAG && projectId
+    ? await Promise.all([
+        buildComparisonContextRAG(projectId, tobeCatalog, 'as-is'),
+        buildComparisonContextRAG(projectId, asisCatalog, 'to-be'),
+      ])
+    : [
+        buildComparisonContextFallback(tobeCatalog, files, 'as-is'),
+        buildComparisonContextFallback(asisCatalog, files, 'to-be'),
+      ];
 
   const comparison = await callClaudeStep<ComparisonResult>(
     buildComparisonSystemPrompt(),
