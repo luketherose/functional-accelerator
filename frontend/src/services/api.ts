@@ -44,6 +44,12 @@ export const filesApi = {
 
   previewUrl: (projectId: string, fileId: string) =>
     `${BASE_URL}/api/files/${projectId}/${fileId}/preview`,
+
+  indexStatus: (projectId: string) =>
+    api.get<{ total: number; indexed: number; pending: number }>(`/api/files/${projectId}/index-status`).then(r => r.data),
+
+  reindex: (projectId: string) =>
+    api.post<{ message: string; total: number }>(`/api/files/${projectId}/reindex`).then(r => r.data),
 };
 
 // --- Analysis ---

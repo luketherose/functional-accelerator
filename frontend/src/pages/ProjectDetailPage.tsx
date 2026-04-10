@@ -3,10 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Play, Loader2, RefreshCw, Trash2,
   Clock, CheckCircle2, AlertCircle, FileText, History,
-  Pencil, X, Check
+  Pencil, X, Check, Database
 } from 'lucide-react';
 import type { ProjectDetail, Analysis, FileBucket } from '../types';
-import { projectsApi, analysisApi, parseAnalysisResult } from '../services/api';
+import { projectsApi, analysisApi, filesApi, parseAnalysisResult } from '../services/api';
 import FileUploader from '../components/FileUploader';
 import FileList from '../components/FileList';
 import AnalysisTabs from '../components/AnalysisTabs';
@@ -39,6 +39,10 @@ export default function ProjectDetailPage() {
   const [editDescription, setEditDescription] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // RAG index status
+  const [indexStatus, setIndexStatus] = useState<{ total: number; indexed: number; pending: number } | null>(null);
+  const [reindexing, setReindexing] = useState(false);
+
   const load = useCallback(async () => {
     if (!id) return;
     try {
@@ -57,6 +61,33 @@ export default function ProjectDetailPage() {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Load RAG index status when project loads
+  useEffect(() => {
+    if (!id) return;
+    filesApi.indexStatus(id).then(setIndexStatus).catch(() => {});
+  }, [id]);
+
+  const handleReindex = async () => {
+    if (!id) return;
+    setReindexing(true);
+    try {
+      await filesApi.reindex(id);
+      // Poll status every 3s until fully indexed
+      const poll = setInterval(async () => {
+        const status = await filesApi.indexStatus(id).catch(() => null);
+        if (status) {
+          setIndexStatus(status);
+          if (status.pending === 0) {
+            clearInterval(poll);
+            setReindexing(false);
+          }
+        }
+      }, 3000);
+    } catch {
+      setReindexing(false);
+    }
+  };
 
   // Poll while analyzing
   useEffect(() => {
@@ -245,12 +276,54 @@ export default function ProjectDetailPage() {
                       {bucket === 'as-is' ? 'As-Is' : bucket === 'to-be' ? 'To-Be' : 'Business Rules'}
                     </span>
                   </div>
-                  <FileUploader projectId={project.id} bucket={bucket} onUploadComplete={load} />
+                  <FileUploader projectId={project.id} bucket={bucket} onUploadComplete={() => { load(); filesApi.indexStatus(project.id).then(setIndexStatus).catch(() => {}); }} />
                 </div>
               ))}
               <div className="pt-2">
                 <FileList files={project.files} projectId={project.id} onDeleted={load} />
               </div>
+
+              {/* RAG index status banner */}
+              {indexStatus && indexStatus.total > 0 && (
+                <div className={`rounded-xl border p-3 flex items-center gap-3 text-xs ${
+                  indexStatus.pending === 0
+                    ? 'border-emerald-100 bg-emerald-50/60'
+                    : 'border-amber-100 bg-amber-50/60'
+                }`}>
+                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                    indexStatus.pending === 0 ? 'bg-emerald-500' : 'bg-amber-500'
+                  }`}>
+                    {reindexing
+                      ? <Loader2 size={13} className="animate-spin text-white" />
+                      : indexStatus.pending === 0
+                        ? <CheckCircle2 size={13} className="text-white" />
+                        : <Database size={13} className="text-white" />
+                    }
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    {indexStatus.pending === 0 ? (
+                      <p className="text-emerald-700 font-medium">
+                        {indexStatus.indexed}/{indexStatus.total} files indexed for semantic search
+                      </p>
+                    ) : (
+                      <>
+                        <p className="text-amber-700 font-medium">
+                          {reindexing ? 'Indexing…' : `${indexStatus.pending} file${indexStatus.pending > 1 ? 's' : ''} not yet indexed`}
+                        </p>
+                        <p className="text-amber-600 mt-0.5">{indexStatus.indexed}/{indexStatus.total} ready for RAG retrieval</p>
+                      </>
+                    )}
+                  </div>
+                  {indexStatus.pending > 0 && !reindexing && (
+                    <button
+                      onClick={handleReindex}
+                      className="btn-secondary text-xs py-1 px-2 shrink-0"
+                    >
+                      <RefreshCw size={11} /> Index now
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
