@@ -103,6 +103,45 @@ export interface ImpactFeedback {
   created_at: string;
 }
 
+// ─── UAT Risk Analysis ────────────────────────────────────────────────────────
+
+export interface UATAnalysis {
+  id: string;
+  project_id: string;
+  version_name: string;
+  status: 'pending' | 'running' | 'done' | 'error';
+  file_name: string | null;
+  defect_count: number | null;
+  result_json: string | null;
+  error_message: string | null;
+  progress_step: string | null;
+  created_at: string;
+}
+
+export interface UATApplicationStat {
+  application: string;
+  total: number;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  riskScore: number;
+}
+
+export interface UATAnalysisResult {
+  executiveSummary: string;
+  overallRiskLevel: 'high' | 'medium' | 'low';
+  totalDefects: number;
+  byApplication: UATApplicationStat[];
+  byPriority: { priority: string; count: number; percentage: number }[];
+  byModule: { module: string; count: number; criticalCount: number }[];
+  topDefects: { id: string; title: string; priority: string; application: string; module: string; impact: string }[];
+  recurringPatterns: { pattern: string; occurrences: number; applications: string[]; priority: 'high' | 'medium' | 'low' }[];
+  riskAreas: { area: string; riskLevel: 'high' | 'medium' | 'low'; rationale: string; recommendation: string; relatedApplications: string[] }[];
+  preventionActions: { action: string; priority: 'high' | 'medium' | 'low'; targetApplication: string; effort: 'low' | 'medium' | 'high' }[];
+  qualityTrend: string;
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;

@@ -3,14 +3,15 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Play, Loader2, RefreshCw, Trash2,
   Clock, CheckCircle2, AlertCircle, FileText, History,
-  Pencil, X, Check, Database
+  Pencil, X, Check, Database, ShieldAlert, Upload
 } from 'lucide-react';
-import type { ProjectDetail, Analysis, FileBucket } from '../types';
-import { projectsApi, analysisApi, filesApi, parseAnalysisResult } from '../services/api';
+import type { ProjectDetail, Analysis, FileBucket, UATAnalysis } from '../types';
+import { projectsApi, analysisApi, filesApi, uatApi, parseAnalysisResult, parseUATResult } from '../services/api';
 import FileUploader from '../components/FileUploader';
 import FileList from '../components/FileList';
 import AnalysisTabs from '../components/AnalysisTabs';
 import AnalysisProgress from '../components/AnalysisProgress';
+import UATDashboard from '../components/UATDashboard';
 import PageHeader from '../components/Layout/PageHeader';
 
 function formatDate(iso: string) {
@@ -19,7 +20,7 @@ function formatDate(iso: string) {
   });
 }
 
-type ActiveSection = 'documents' | 'analysis';
+type ActiveSection = 'documents' | 'analysis' | 'uat';
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -42,6 +43,12 @@ export default function ProjectDetailPage() {
   // RAG index status
   const [indexStatus, setIndexStatus] = useState<{ total: number; indexed: number; pending: number } | null>(null);
   const [reindexing, setReindexing] = useState(false);
+
+  // UAT state
+  const [uatAnalyses, setUatAnalyses] = useState<UATAnalysis[]>([]);
+  const [selectedUAT, setSelectedUAT] = useState<UATAnalysis | null>(null);
+  const [uatUploading, setUatUploading] = useState(false);
+  const [isUATRunning, setIsUATRunning] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -87,6 +94,60 @@ export default function ProjectDetailPage() {
     } catch {
       setReindexing(false);
     }
+  };
+
+  // Load UAT analyses on mount
+  useEffect(() => {
+    if (!id) return;
+    uatApi.list(id).then(list => {
+      setUatAnalyses(list);
+      const latestDone = list.find((a: UATAnalysis) => a.status === 'done');
+      if (latestDone) setSelectedUAT(latestDone);
+    }).catch(() => {});
+  }, [id]);
+
+  // Poll while UAT is running
+  useEffect(() => {
+    if (!isUATRunning || !id) return;
+    const interval = setInterval(async () => {
+      try {
+        const list = await uatApi.list(id);
+        setUatAnalyses(list);
+        const running = list.find((a: UATAnalysis) => a.status === 'running');
+        if (!running) {
+          setIsUATRunning(false);
+          clearInterval(interval);
+          const done = list.find((a: UATAnalysis) => a.status === 'done');
+          if (done) { setSelectedUAT(done); setActiveSection('uat'); }
+        }
+      } catch { /* keep polling */ }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [isUATRunning, id]);
+
+  const handleUATUpload = async (file: File) => {
+    if (!id) return;
+    setUatUploading(true);
+    try {
+      await uatApi.run(id, file);
+      setIsUATRunning(true);
+      setActiveSection('uat');
+      const list = await uatApi.list(id);
+      setUatAnalyses(list);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to start UAT analysis';
+      alert(msg);
+    } finally {
+      setUatUploading(false);
+    }
+  };
+
+  const handleDeleteUAT = async (analysisId: string) => {
+    if (!id || !confirm('Delete this UAT analysis?')) return;
+    await uatApi.delete(id, analysisId);
+    if (selectedUAT?.id === analysisId) setSelectedUAT(null);
+    const list = await uatApi.list(id);
+    setUatAnalyses(list);
   };
 
   // Poll while analyzing
@@ -254,15 +315,22 @@ export default function ProjectDetailPage() {
                 onClick={() => setActiveSection('documents')}
                 className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium transition-all ${activeSection === 'documents' ? 'bg-white shadow-sm text-text-primary' : 'text-text-muted'}`}
               >
-                <FileText size={12} /> Documents
+                <FileText size={12} /> Docs
                 {fileCount > 0 && <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{fileCount}</span>}
               </button>
               <button
                 onClick={() => setActiveSection('analysis')}
                 className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium transition-all ${activeSection === 'analysis' ? 'bg-white shadow-sm text-text-primary' : 'text-text-muted'}`}
               >
-                <History size={12} /> Analyses
+                <History size={12} /> Analysis
                 {project.analyses.length > 0 && <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{project.analyses.length}</span>}
+              </button>
+              <button
+                onClick={() => setActiveSection('uat')}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium transition-all ${activeSection === 'uat' ? 'bg-white shadow-sm text-text-primary' : 'text-text-muted'}`}
+              >
+                <ShieldAlert size={12} /> UAT
+                {uatAnalyses.length > 0 && <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{uatAnalyses.length}</span>}
               </button>
             </div>
           </div>
@@ -322,6 +390,72 @@ export default function ProjectDetailPage() {
                       <RefreshCw size={11} /> Index now
                     </button>
                   )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeSection === 'uat' && (
+            <div className="p-5 space-y-4">
+              {/* Upload area */}
+              <div>
+                <p className="text-xs font-semibold text-text-primary mb-2">Upload ALM Export</p>
+                <label className={`flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 border-dashed transition-colors cursor-pointer ${uatUploading ? 'border-brand-200 bg-brand-50' : 'border-surface-border hover:border-brand-200 hover:bg-surface'}`}>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    className="hidden"
+                    disabled={uatUploading || isUATRunning}
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleUATUpload(f); e.target.value = ''; }}
+                  />
+                  {uatUploading || isUATRunning
+                    ? <Loader2 size={18} className="animate-spin text-purple-deep" />
+                    : <Upload size={18} className="text-text-muted" />
+                  }
+                  <span className="text-xs text-text-muted text-center">
+                    {uatUploading ? 'Uploading…' : isUATRunning ? 'Analysing…' : 'Drop ALM Excel / CSV here or click to browse'}
+                  </span>
+                </label>
+              </div>
+
+              {/* Previous UAT analyses */}
+              {uatAnalyses.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-text-primary">History</p>
+                  {uatAnalyses.map((ua: UATAnalysis) => {
+                    const isSelected = selectedUAT?.id === ua.id;
+                    return (
+                      <div
+                        key={ua.id}
+                        onClick={() => setSelectedUAT(ua)}
+                        className={`p-3 rounded-xl border cursor-pointer transition-all ${isSelected ? 'border-purple-deep bg-brand-50' : 'border-surface-border bg-white hover:border-brand-200'}`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-semibold text-text-primary">{ua.version_name}</span>
+                          <div className="flex items-center gap-1">
+                            {ua.status === 'done' && <CheckCircle2 size={13} className="text-emerald-500" />}
+                            {ua.status === 'running' && <Loader2 size={13} className="animate-spin text-amber-500" />}
+                            {ua.status === 'error' && <AlertCircle size={13} className="text-red-500" />}
+                            <button onClick={e => { e.stopPropagation(); handleDeleteUAT(ua.id); }} className="text-text-muted hover:text-red-500 transition-colors ml-1">
+                              <Trash2 size={11} />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 text-[10px] text-text-muted">
+                          <Clock size={9} /> {formatDate(ua.created_at)}
+                        </div>
+                        {ua.defect_count != null && (
+                          <p className="text-[10px] text-text-muted mt-0.5">{ua.defect_count} defects · {ua.file_name}</p>
+                        )}
+                        {ua.status === 'running' && ua.progress_step && (
+                          <p className="text-[10px] text-amber-600 mt-1 truncate">{ua.progress_step}</p>
+                        )}
+                        {ua.status === 'error' && ua.error_message && (
+                          <p className="text-[10px] text-red-500 mt-1 truncate">{ua.error_message}</p>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -427,6 +561,44 @@ export default function ProjectDetailPage() {
           {analysisResult && (
             <AnalysisTabs result={analysisResult} projectId={id!} analysisId={selectedAnalysis!.id} />
           )}
+
+          {/* UAT right panel */}
+          {activeSection === 'uat' && isUATRunning && !selectedUAT?.result_json && (
+            <div className="flex-1 flex flex-col items-center justify-center gap-4">
+              <div className="w-16 h-16 rounded-2xl bg-brand-50 border border-brand-200 flex items-center justify-center">
+                <Loader2 size={26} className="animate-spin text-purple-deep" />
+              </div>
+              <div className="text-center">
+                <p className="text-sm font-medium text-text-primary">Analysing UAT defects…</p>
+                {(() => { const running = uatAnalyses.find((a: UATAnalysis) => a.status === 'running'); return running?.progress_step ? <p className="text-xs text-amber-600 mt-1">{running.progress_step}</p> : <p className="text-xs text-text-muted mt-1">Starting…</p>; })()}
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'uat' && !isUATRunning && !selectedUAT && (
+            <div className="flex-1 flex flex-col items-center justify-center gap-4 text-text-muted">
+              <div className="w-16 h-16 rounded-2xl bg-surface border-2 border-dashed border-surface-border flex items-center justify-center">
+                <ShieldAlert size={22} className="text-text-muted" />
+              </div>
+              <div className="text-center">
+                <p className="text-sm font-medium text-text-primary">UAT Risk Analysis</p>
+                <p className="text-xs text-text-muted mt-1 max-w-xs">Upload an ALM defect export (Excel or CSV) to generate a risk dashboard.</p>
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'uat' && selectedUAT?.status === 'error' && (
+            <div className="flex-1 flex flex-col items-center justify-center gap-3">
+              <AlertCircle size={28} className="text-red-400" />
+              <p className="text-sm font-medium text-text-primary">UAT Analysis failed</p>
+              <p className="text-xs text-text-muted max-w-sm text-center">{selectedUAT.error_message}</p>
+            </div>
+          )}
+
+          {activeSection === 'uat' && selectedUAT && (() => {
+            const result = parseUATResult(selectedUAT);
+            return result ? <UATDashboard result={result} fileName={selectedUAT.file_name} /> : null;
+          })()}
         </div>
       </div>
     </div>

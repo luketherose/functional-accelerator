@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback } from '../types';
+import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, UATAnalysis, UATAnalysisResult } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -147,6 +147,33 @@ export const riskApi = {
   delete: (projectId: string, assessmentId: string) =>
     api.delete(`/api/risk/${projectId}/${assessmentId}`).then(r => r.data),
 };
+
+// --- UAT Risk Analysis ---
+export const uatApi = {
+  list: (projectId: string) =>
+    api.get<UATAnalysis[]>(`/api/uat/${projectId}`).then(r => r.data),
+
+  get: (projectId: string, analysisId: string) =>
+    api.get<UATAnalysis>(`/api/uat/${projectId}/${analysisId}`).then(r => r.data),
+
+  run: (projectId: string, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post<{ analysisId: string; versionName: string; status: string; defectCount: number }>(
+      `/api/uat/${projectId}/run`,
+      form,
+      { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 30_000 }
+    ).then(r => r.data);
+  },
+
+  delete: (projectId: string, analysisId: string) =>
+    api.delete(`/api/uat/${projectId}/${analysisId}`).then(r => r.data),
+};
+
+export function parseUATResult(analysis: UATAnalysis): UATAnalysisResult | null {
+  if (!analysis.result_json) return null;
+  try { return JSON.parse(analysis.result_json) as UATAnalysisResult; } catch { return null; }
+}
 
 // Helper to parse result_json from an analysis record
 export function parseAnalysisResult(analysis: Analysis): AnalysisResult | null {

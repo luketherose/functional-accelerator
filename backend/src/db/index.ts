@@ -101,6 +101,20 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_file_chunks_project_bucket
     ON file_chunks(project_id, bucket);
+
+  CREATE TABLE IF NOT EXISTS uat_analyses (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    version_name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    file_name TEXT,
+    defect_count INTEGER,
+    result_json TEXT,
+    error_message TEXT,
+    progress_step TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+  );
 `);
 
 // --- Migration: add progress_step to analyses if missing ---

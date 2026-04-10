@@ -10,6 +10,7 @@ import projectsRouter from './routes/projects';
 import filesRouter from './routes/files';
 import analysisRouter from './routes/analysis';
 import riskRouter from './routes/risk';
+import uatRouter from './routes/uat';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -27,6 +28,7 @@ app.use('/api/projects', projectsRouter);
 app.use('/api/files', filesRouter);
 app.use('/api/analysis', analysisRouter);
 app.use('/api/risk', riskRouter);
+app.use('/api/uat', uatRouter);
 
 // --- Error handler ---
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
