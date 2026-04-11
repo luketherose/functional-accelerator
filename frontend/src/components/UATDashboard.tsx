@@ -1,6 +1,8 @@
-import { AlertTriangle, CheckCircle2, AlertCircle, TrendingUp, Shield, Zap, ChevronDown, ChevronUp, ChevronLeft } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, AlertCircle, TrendingUp, Shield, Zap, ChevronDown, ChevronUp, ChevronLeft, Download, Loader2 } from 'lucide-react';
 import { useState } from 'react';
-import type { UATAnalysisResult, UATApplicationStat } from '../types';
+import { useTranslation } from 'react-i18next';
+import type { UATAnalysisResult, UATAnalysis, UATApplicationStat } from '../types';
+import { generateUATReport } from '../services/uatReport';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -53,6 +55,7 @@ function sectorPath(cx: number, cy: number, r: number, ir: number, startDeg: num
 interface WawSlice { label: string; value: number; color: string }
 
 function WawDrillDown({ result }: { result: UATAnalysisResult }) {
+  const { t } = useTranslation();
   const [drillApp, setDrillApp] = useState<string | null>(null);
   const [hovered, setHovered] = useState<number | null>(null);
   const CX = 110, CY = 110, R = 88, IR = 48;
@@ -92,12 +95,12 @@ function WawDrillDown({ result }: { result: UATAnalysisResult }) {
       <div className="flex items-start justify-between mb-4">
         <div>
           <h3 className="text-sm font-semibold text-text-primary flex items-center gap-1.5">
-            Effetto WAW
+            {t('dashboard.waw.title')}
           </h3>
           <p className="text-xs text-text-muted mt-0.5">
             {drillApp
-              ? `Distribuzione priorità — ${drillApp}`
-              : 'Concentrazione del rischio per applicazione · click per drill-down'}
+              ? t('dashboard.waw.drillSubtitle', { app: drillApp })
+              : t('dashboard.waw.mainSubtitle')}
           </p>
         </div>
         {drillApp && (
@@ -105,7 +108,7 @@ function WawDrillDown({ result }: { result: UATAnalysisResult }) {
             onClick={() => { setDrillApp(null); setHovered(null); }}
             className="flex items-center gap-1 text-xs text-purple-deep hover:underline shrink-0"
           >
-            <ChevronLeft size={12} /> Tutte le app
+            <ChevronLeft size={12} /> {t('dashboard.waw.backToAll')}
           </button>
         )}
       </div>
@@ -175,13 +178,14 @@ function FilterChips<T extends string>({
   value: T | null;
   onChange: (v: T | null) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
       <span className="text-[10px] text-text-muted shrink-0">{label}:</span>
       <button
         className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${value === null ? 'border-purple-deep bg-purple-deep text-white' : 'border-surface-border text-text-muted hover:border-purple-deep hover:text-purple-deep'}`}
         onClick={() => onChange(null)}
-      >Tutti</button>
+      >{t('common.all')}</button>
       {options.map(o => (
         <button
           key={o.value}
@@ -254,11 +258,15 @@ function ApplicationBar({ stat, maxScore }: { stat: UATApplicationStat; maxScore
 
 interface Props {
   result: UATAnalysisResult;
+  analysis: UATAnalysis;
+  projectName: string;
   fileName: string | null;
 }
 
-export default function UATDashboard({ result, fileName }: Props) {
+export default function UATDashboard({ result, analysis, projectName, fileName }: Props) {
+  const { t } = useTranslation();
   const [expandedDefect, setExpandedDefect] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   // ── Filter states ────────────────────────────────────────────────────────────
   const [raRisk,    setRaRisk]    = useState<'high'|'medium'|'low'|null>(null);
@@ -291,28 +299,51 @@ export default function UATDashboard({ result, fileName }: Props) {
     (!rpApp  || p.applications.includes(rpApp))
   );
 
+  const handleExportPDF = async () => {
+    setExporting(true);
+    try {
+      generateUATReport(result, analysis, projectName);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="flex-1 overflow-y-auto bg-surface/30 p-6 space-y-6">
+
+      {/* ── Toolbar ───────────────────────────────────────────── */}
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-text-muted">{analysis.version_name} · {fileName}</p>
+        <button
+          onClick={handleExportPDF}
+          disabled={exporting}
+          className="btn-secondary text-xs flex items-center gap-1.5"
+          title={t('dashboard.exportPDF')}
+        >
+          {exporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+          {exporting ? t('dashboard.generating') : t('dashboard.exportPDF')}
+        </button>
+      </div>
 
       {/* ── KPI strip ─────────────────────────────────────────── */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
         <div className="card p-4">
-          <p className="text-xs text-text-muted mb-1">Total Defects</p>
+          <p className="text-xs text-text-muted mb-1">{t('dashboard.totalDefects')}</p>
           <p className="text-2xl font-bold text-text-primary">{result.totalDefects}</p>
           {fileName && <p className="text-[10px] text-text-muted mt-1 truncate">{fileName}</p>}
         </div>
         <div className="card p-4">
-          <p className="text-xs text-text-muted mb-1">Overall Risk</p>
+          <p className="text-xs text-text-muted mb-1">{t('dashboard.overallRisk')}</p>
           <div className="mt-1"><RiskBadge level={result.overallRiskLevel} /></div>
         </div>
         <div className="card p-4">
-          <p className="text-xs text-text-muted mb-1">Critical + High</p>
+          <p className="text-xs text-text-muted mb-1">{t('dashboard.criticalHigh')}</p>
           <p className="text-2xl font-bold text-red-600">
             {result.byPriority.filter(p => p.priority === 'Critical' || p.priority === 'High').reduce((s, p) => s + p.count, 0)}
           </p>
         </div>
         <div className="card p-4">
-          <p className="text-xs text-text-muted mb-1">Applications Impacted</p>
+          <p className="text-xs text-text-muted mb-1">{t('dashboard.appsImpacted')}</p>
           <p className="text-2xl font-bold text-text-primary">{result.byApplication.length}</p>
         </div>
       </div>
@@ -325,8 +356,8 @@ export default function UATDashboard({ result, fileName }: Props) {
         {/* ── By application ────────────────────────────────────── */}
         <div className="card p-5">
           <SectionHeader
-            title="Risk by Application"
-            subtitle="Bar width = risk score (Critical×4 + High×2 + Medium×1)"
+            title={t('dashboard.riskByApp')}
+            subtitle={t('dashboard.riskByAppSub')}
           />
           {/* Legend */}
           <div className="flex gap-3 mb-3 flex-wrap">
@@ -345,7 +376,7 @@ export default function UATDashboard({ result, fileName }: Props) {
 
         {/* ── Priority distribution ─────────────────────────────── */}
         <div className="card p-5">
-          <SectionHeader title="Priority Distribution" />
+          <SectionHeader title={t('dashboard.priorityDist')} />
           <div className="space-y-3">
             {result.byPriority.map(p => (
               <div key={p.priority}>
@@ -365,7 +396,7 @@ export default function UATDashboard({ result, fileName }: Props) {
 
           {/* By module */}
           <div className="mt-5 pt-4 border-t border-surface-border">
-            <p className="text-xs font-semibold text-text-primary mb-3">Top Functional Modules</p>
+            <p className="text-xs font-semibold text-text-primary mb-3">{t('dashboard.topModules')}</p>
             <div className="space-y-1.5">
               {result.byModule.slice(0, 8).map(m => (
                 <div key={m.module} className="flex items-center gap-2">
@@ -381,13 +412,13 @@ export default function UATDashboard({ result, fileName }: Props) {
 
       {/* ── Executive summary ─────────────────────────────────────── */}
       <div className="card p-5">
-        <SectionHeader title="Executive Summary" />
+        <SectionHeader title={t('dashboard.executiveSummary')} />
         <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-line">{result.executiveSummary}</p>
         {result.qualityTrend && (
           <div className="mt-3 pt-3 border-t border-surface-border">
             <div className="flex items-center gap-1.5 mb-1.5">
               <TrendingUp size={13} className="text-purple-deep" />
-              <p className="text-xs font-semibold text-text-primary">Quality Trend</p>
+              <p className="text-xs font-semibold text-text-primary">{t('dashboard.qualityTrend')}</p>
             </div>
             <p className="text-xs text-text-secondary leading-relaxed">{result.qualityTrend}</p>
           </div>
@@ -399,11 +430,11 @@ export default function UATDashboard({ result, fileName }: Props) {
         {/* ── Risk areas ────────────────────────────────────────────── */}
         {result.riskAreas.length > 0 && (
           <div className="card p-5">
-            <SectionHeader title="Risk Areas" subtitle="Evidence-based risk assessment from defect patterns" />
+            <SectionHeader title={t('dashboard.riskAreas')} subtitle={t('dashboard.riskAreasSub')} />
             {/* Filters */}
             <div className="space-y-1.5 mb-4">
               <FilterChips<'high'|'medium'|'low'>
-                label="Rischio"
+                label={t('dashboard.filterRisk')}
                 options={[{value:'high',label:'High'},{value:'medium',label:'Medium'},{value:'low',label:'Low'}]}
                 value={raRisk} onChange={setRaRisk}
               />
@@ -417,7 +448,7 @@ export default function UATDashboard({ result, fileName }: Props) {
             </div>
             <div className="space-y-3">
               {filteredRiskAreas.length === 0 && (
-                <p className="text-xs text-text-muted py-2 text-center">Nessun risultato con i filtri selezionati.</p>
+                <p className="text-xs text-text-muted py-2 text-center">{t('dashboard.noResults')}</p>
               )}
               {filteredRiskAreas.map((area, i) => (
                 <div key={i} className="rounded-xl border border-surface-border p-3.5 space-y-2">
@@ -446,17 +477,17 @@ export default function UATDashboard({ result, fileName }: Props) {
         {/* ── Prevention actions ────────────────────────────────────── */}
         {result.preventionActions.length > 0 && (
           <div className="card p-5">
-            <SectionHeader title="Prevention Actions" subtitle="Prioritized recommendations to avoid recurrence" />
+            <SectionHeader title={t('dashboard.preventionActions')} subtitle={t('dashboard.preventionActionsSub')} />
             {/* Filters */}
             <div className="space-y-1.5 mb-4">
               <FilterChips<'high'|'medium'|'low'>
-                label="Priorità"
+                label={t('dashboard.filterPriority')}
                 options={[{value:'high',label:'High'},{value:'medium',label:'Medium'},{value:'low',label:'Low'}]}
                 value={paPrio} onChange={setPaPrio}
               />
               <FilterChips<'low'|'medium'|'high'>
-                label="Effort"
-                options={[{value:'low',label:'Quick win'},{value:'medium',label:'Medium'},{value:'high',label:'High effort'}]}
+                label={t('dashboard.filterEffort')}
+                options={[{value:'low',label:t('common.effort.low')},{value:'medium',label:t('common.effort.medium')},{value:'high',label:t('common.effort.high')}]}
                 value={paEffort} onChange={setPaEffort}
               />
               {paApps.length > 0 && (
@@ -469,7 +500,7 @@ export default function UATDashboard({ result, fileName }: Props) {
             </div>
             <div className="space-y-2.5">
               {filteredPrevActions.length === 0 && (
-                <p className="text-xs text-text-muted py-2 text-center">Nessun risultato con i filtri selezionati.</p>
+                <p className="text-xs text-text-muted py-2 text-center">{t('dashboard.noResults')}</p>
               )}
               {filteredPrevActions.map((action, i) => (
                 <div key={i} className="flex items-start gap-3 p-3 rounded-xl border border-surface-border">
@@ -500,12 +531,12 @@ export default function UATDashboard({ result, fileName }: Props) {
         <div className="card p-5">
           <div className="flex flex-col sm:flex-row sm:items-start gap-3 mb-4">
             <div className="flex-1">
-              <SectionHeader title="Recurring Defect Patterns" subtitle="Issues that appeared multiple times across the UAT cycle" />
+              <SectionHeader title={t('dashboard.recurringPatterns')} subtitle={t('dashboard.recurringPatternsSub')} />
             </div>
             {/* Filters */}
             <div className="space-y-1.5 shrink-0">
               <FilterChips<'high'|'medium'|'low'>
-                label="Priorità"
+                label={t('dashboard.filterPriority')}
                 options={[{value:'high',label:'High'},{value:'medium',label:'Medium'},{value:'low',label:'Low'}]}
                 value={rpPrio} onChange={setRpPrio}
               />
@@ -520,7 +551,7 @@ export default function UATDashboard({ result, fileName }: Props) {
           </div>
           <div className="space-y-2">
             {filteredPatterns.length === 0 && (
-              <p className="text-xs text-text-muted py-2 text-center">Nessun risultato con i filtri selezionati.</p>
+              <p className="text-xs text-text-muted py-2 text-center">{t('dashboard.noResults')}</p>
             )}
             {filteredPatterns.map((p, i) => (
               <div key={i} className="flex items-center gap-3 p-3 rounded-xl border border-surface-border">
@@ -545,8 +576,8 @@ export default function UATDashboard({ result, fileName }: Props) {
       {result.topDefects.length > 0 && (
         <div className="card p-5">
           <SectionHeader
-            title="Top Critical & High Defects"
-            subtitle={`${result.topDefects.length} most impactful defects`}
+            title={t('dashboard.topDefects')}
+            subtitle={t('dashboard.topDefectsSub', { count: result.topDefects.length })}
           />
           <div className="space-y-2">
             {result.topDefects.map(d => {

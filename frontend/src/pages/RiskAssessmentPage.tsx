@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
-  Upload, Loader2, AlertCircle, CheckCircle2,
+  Upload, Loader2, AlertCircle,
   Trash2, Clock, ShieldAlert, ShieldCheck, ShieldX, FileSpreadsheet, ArrowLeft
 } from 'lucide-react';
 import type { RiskAssessment, RiskAssessmentResult } from '../types';

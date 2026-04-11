@@ -1,143 +1,188 @@
-# CLAUDE.md — Working guide for Functional Accelerator
+# CLAUDE.md
 
-This file provides operational instructions for any developer (human or AI) working on this project.
-
----
-
-## Product Objective
-
-An internal web tool that lets functional analysts:
-1. Upload current-state (as-is) and target-state (to-be) documentation
-2. Trigger Claude-powered analysis
-3. Receive structured functional impacts, UI/UX impacts, business rules, and a rendered HTML prototype
-
-The tool accelerates functional analysis phases in consulting/delivery projects.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ---
 
-## Tech Stack
+## Dev Commands
 
-| Layer | Technology |
-|---|---|
-| Frontend | React 18 + Vite + TypeScript + Tailwind CSS v3 |
-| Backend | Node.js + Express + TypeScript (ts-node-dev) |
-| Database | SQLite via `better-sqlite3` |
-| AI | Anthropic Claude via `@anthropic-ai/sdk` |
-| File parsing | `pdf-parse`, `mammoth`, `xlsx` |
-| File upload | `multer` (multipart) |
+```bash
+# Backend (http://localhost:3001)
+cd backend && npm run dev          # ts-node-dev with hot reload
 
----
+# Frontend (http://localhost:5173)
+cd frontend && npm run dev         # Vite dev server
 
-## Architectural Principles
+# Type-check (no emit)
+cd backend  && npx tsc --noEmit
+cd frontend && npx tsc --noEmit
 
-1. **Clean separation** — frontend never calls Claude directly; all AI logic lives in the backend
-2. **As-is vs To-be is a first-class concept** — the `bucket` field on every file is `as-is | to-be | screenshot`
-3. **Mock mode always works** — `CLAUDE_MOCK=true` returns real fixture data so UI can be developed/demoed without API key
-4. **Async analysis** — analysis runs in background, frontend polls every 2s until status changes
-5. **Structured prompts** — prompts are built by `promptBuilder.ts`, never ad-hoc inline strings
-6. **SQLite is sync** — all DB calls use `better-sqlite3` sync API; no async DB chaos
+# Lint frontend
+cd frontend && npm run lint
 
----
+# Production build
+cd backend  && npm run build       # outputs dist/
+cd frontend && npm run build       # outputs dist/
+```
 
-## Code Conventions
+Run backend and frontend in separate terminals. No Docker, no monorepo tooling.
 
-### Backend
-- All routes return `{ error: string }` on failure with appropriate HTTP status
-- Route handlers are thin — business logic goes in `/services/`
-- Use `console.log('[module] message')` for logging, with module prefix
-- Environment variables are read via `process.env.*` — never hardcoded
-- Every DB query uses prepared statements (no string interpolation)
-
-### Frontend
-- Types live in `src/types/index.ts` — never define inline ad-hoc types
-- API calls go through `src/services/api.ts` — no raw `fetch` or `axios` calls in components
-- Tailwind classes used via component layer (`card`, `btn-primary`, etc.) where possible
-- State: local `useState` — no global state manager yet (keep simple for MVP)
-- Error and empty states are always handled — no unhandled loading states
+**Mock mode** (no Claude API key needed):
+```bash
+cd backend && CLAUDE_MOCK=true npm run dev
+```
 
 ---
 
-## UI/UX Conventions
+## Product
 
-- **Color system**: purple-deep (`#3b0764`) is the primary brand color
-- **Sidebar**: always visible, dark purple, fixed left
-- **Cards**: use `.card` class — white bg, subtle border, light shadow
-- **Badges**: `.badge-asis` (blue), `.badge-tobe` (violet), `.badge-screenshot` (slate)
-- **Typography**: Inter font, `text-text-primary / text-text-secondary / text-text-muted`
-- **Severity badges**: `.badge-high` (red), `.badge-medium` (amber), `.badge-low` (green)
-- Never use raw Tailwind colours — use the design system tokens in `tailwind.config.js`
-- Empty states must have an icon, heading, and CTA
+Two distinct tools in one app, both under the same project workspace:
+
+| Module | Entry point | What it does |
+|---|---|---|
+| **Functional Analysis** | `ProjectDetailPage` → "Analisi" tab | Compares AS-IS vs TO-BE documents, outputs functional/UI impacts, business rules, HTML prototype |
+| **Defect Intelligence Platform** | `ProjectDetailPage` → "Risk Analysis" tab | Ingests ALM defect exports (Excel/CSV), clusters them, tracks risk over time |
 
 ---
 
-## How to Add a New File Parser
+## Architecture
 
-1. Open `backend/src/services/fileParsing.ts`
-2. Add a new `if` branch in `parseFile()` matching the MIME type or extension
-3. Return extracted text as a string (capped at 100k chars recommended)
-4. Add the new MIME type to the allowed list in `backend/src/routes/files.ts`
-5. Update the `ACCEPTED` string in `frontend/src/components/FileUploader.tsx`
+### Backend (`backend/src/`)
+
+```
+routes/          ← thin Express handlers (5 routers mounted at /api/*)
+  projects.ts    ← CRUD for projects
+  files.ts       ← file upload, RAG indexing, preview
+  analysis.ts    ← functional analysis pipeline (async, polled by frontend)
+  risk.ts        ← legacy risk assessment (older, separate from UAT)
+  uat.ts         ← Defect Intelligence Platform — see routing note below
+
+services/        ← all business logic
+  pipeline.ts          functional analysis: 5-step RAG pipeline
+  promptBuilder.ts     all Claude prompt construction (never ad-hoc strings)
+  claude.ts            Claude API client, response parser, mock toggle
+  uatPipeline.ts       UAT: 4-step deterministic pipeline
+  taxonomy.ts          default keyword taxonomy + classifyDefects()
+  almParser.ts         Excel/CSV ALM export parser → normalised Defect[]
+  clusterSuggestions.ts  Claude call to discover hidden themes in "Other" defects
+  fileParsing.ts       text extraction for PDF, Word, Excel, image, markdown
+  vectorStore.ts       embedding storage + cosine similarity search (RAG)
+  embeddings.ts        Claude API embedding generation
+  chunking.ts          document chunking strategies for RAG
+  retrieval.ts         multi-query RAG retrieval + formatting
+  imageRenderer.ts     HTML → PNG via Puppeteer
+  mockAnalysis.ts      fixture data for CLAUDE_MOCK=true
+
+db/index.ts      ← SQLite schema init (better-sqlite3, WAL mode, sync API)
+types/index.ts   ← all TypeScript types shared across routes/services
+```
+
+### Frontend (`frontend/src/`)
+
+```
+pages/
+  ProjectsPage.tsx       list / create / delete projects
+  ProjectDetailPage.tsx  main workspace — owns all state, two top-level tabs
+
+components/
+  ── Functional Analysis ──
+  AnalysisTabs.tsx        tabbed result display (impacts, screens, rules, prototype)
+  AnalysisProgress.tsx    progress indicator during async run
+  ImpactDeepDive.tsx      per-impact RAG-backed chat
+  ImpactPrototype.tsx     upload screenshot → generate HTML prototype
+  PrototypePreview.tsx    iframe renderer with DOMPurify sanitisation
+
+  ── Defect Intelligence ──
+  UATDashboard.tsx        main overview: WAW donut, KPIs, risk areas, prevention
+  UATTrend.tsx            cluster time-series across all runs (line + stacked bar)
+  RunComparison.tsx       side-by-side diff of any two completed runs
+  ClusterDrillDown.tsx    cluster → defect table with priority override UI
+  TaxonomyEditor.tsx      keyword editor for defect clusters (per-project)
+  AuditTrail.tsx          project-level log of all risk overrides
+  ClusterSuggestions.tsx  Claude-powered discovery of new cluster themes
+  DiagnosticInsights.tsx  derived risk insights from trend data
+  AIDefectChat.tsx        AI Defect Copilot — conversational Claude interface per-run
+
+services/api.ts     all Axios calls (projectsApi, filesApi, analysisApi, uatApi)
+services/uatReport.ts  jsPDF + jsPDF-autotable PDF report generation
+types/index.ts      mirrors backend types — keep in sync manually
+```
+
+### Data flow — Functional Analysis
+1. User uploads files (bucket: `as-is | to-be | business-rules`) via `POST /api/files/:projectId/upload`
+2. User clicks "Analizza" → `POST /api/analysis/:projectId/run` returns immediately with `analysisId`
+3. Backend runs 5-step pipeline async (RAG retrieval → prompt build → Claude call → parse → save)
+4. Frontend polls `GET /api/projects/:id` every 2s until status = `done`
+5. Result JSON stored in `analyses.result_json`; parsed and rendered by `AnalysisTabs`
+
+### Data flow — Defect Intelligence
+1. User uploads one or more ALM Excel/CSV files → `POST /api/uat/:projectId/run` (multipart, field name `files`, up to 20)
+2. Each file parsed by `almParser.ts`; defects merged and **deduplicated by `external_id`** (first-file-wins). One `ingestion_runs` record per file for provenance.
+3. `uatPipeline.ts` runs async:
+   - Step 1: compute stats locally (no AI)
+   - Step 2: classify defects via keyword taxonomy → `cluster_assignments`
+   - Step 3: per-cluster Claude summaries (one batched call)
+   - Step 4: executive summary + delta vs previous run
+4. Frontend polls `GET /api/uat/:projectId` every 2s until status = `done`
+5. Result JSON in `uat_analyses.result_json`; clusters also queryable from DB
 
 ---
 
-## How to Build Claude Prompts
+## Critical: UAT Route Ordering
 
-All prompts go through `backend/src/services/promptBuilder.ts`.
+`backend/src/routes/uat.ts` has specific 2-segment GET routes (`/cluster-trend`, `/taxonomy`, `/overrides`, `/compare`, `/defects/all`) that **must be registered before** the generic `GET /:projectId/:analysisId` handler. Express matches routes in definition order; the generic handler intercepts all 2-segment paths if placed first.
 
-Rules:
-- Clearly separate **AS-IS** and **TO-BE** sections with markdown headers
-- Always explicitly request: functional impacts, UI/UX impacts, business rules, prototypeHtml
-- Always instruct Claude to return **only raw JSON** — no prose, no fences
-- Cap extracted text at 30k chars per file in the prompt to stay within context limits
-- Images are attached as base64 vision blocks **before** the text prompt
-- Test prompt changes against mock mode first, then real API
+Current correct order (see file):
+1. All `/:projectId/[specific-name]` routes
+2. `GET /:projectId/:analysisId` ← generic, must be last among GET 2-segment routes
+3. `GET /:projectId/:analysisId/...` sub-resource routes
+4. POST/DELETE routes (no conflict, different HTTP methods)
 
-The expected output schema is defined in `backend/src/types/index.ts` (`AnalysisResult`).
+**Always add new specific GET routes before the `GET /:projectId/:analysisId` handler in `uat.ts`.** POST routes on `/:projectId/:analysisId/...` (like `ai-chat`) are safe anywhere — different HTTP method, no conflict.
 
 ---
 
-## How to Maintain As-Is / To-Be Separation
+## Database Schema (key tables)
 
-- On upload, users select: **As-Is**, **To-Be**, or **Screenshot**
-- This is stored as `bucket` field in the `files` table
-- `promptBuilder.ts` filters files by bucket and renders them in separate prompt sections
-- Never mix as-is and to-be content in the same prompt section
-- The frontend enforces this visually with colour-coded badges
+```
+projects            id, name, description, status, timestamps
+files               id, project_id, name, bucket(as-is|to-be|business-rules), extracted_text
+file_chunks         id, file_id, content, embedding(BLOB) — for RAG
+analyses            id, project_id, version_name, status, result_json
+uat_analyses        id, project_id, version_name, status, file_name, defect_count, result_json
+defects             id, external_id, project_id, ingestion_run_id, title, priority, application, module, ...
+cluster_assignments id, uat_analysis_id, defect_id, cluster_key, method(rule|unclassified), matched_keywords
+cluster_configs     id, project_id, cluster_key, keywords(JSON) — per-project taxonomy overrides
+risk_overrides      id, defect_id, project_id, original_priority, overridden_priority, reason
+ingestion_runs      id, project_id, uat_analysis_id, file_name, defect_count
+```
 
----
-
-## Key Files to Know
-
-| File | Purpose |
-|---|---|
-| `backend/src/services/promptBuilder.ts` | All prompt construction |
-| `backend/src/services/claude.ts` | Claude API client + response parser |
-| `backend/src/services/mockAnalysis.ts` | Fixture data for mock mode |
-| `backend/src/services/fileParsing.ts` | Text extraction per file type |
-| `backend/src/db/index.ts` | SQLite init + schema |
-| `frontend/src/services/api.ts` | All frontend API calls |
-| `frontend/src/components/AnalysisTabs.tsx` | Main result UI |
-| `frontend/src/components/PrototypePreview.tsx` | Iframe rendering of prototype HTML |
+All queries use `better-sqlite3` prepared statements (sync API — no async/await in DB calls).
 
 ---
 
-## Rules to Not Break the MVP
+## Type Sync Contract
 
-1. **Do not remove mock mode** — always keep `CLAUDE_MOCK` toggle working
-2. **Do not change the AnalysisResult schema** without updating both `types/index.ts` files (backend + frontend) and `mockAnalysis.ts`
-3. **Do not add external dependencies** to the frontend bundle without checking bundle size impact
-4. **SQLite WAL mode** is enabled — do not disable foreign keys or WAL pragma
-5. **Sanitize prototype HTML** with DOMPurify before rendering — never remove this
-6. **File uploads** are stored in `backend/uploads/` — this is gitignored; don't commit files there
+`backend/src/types/index.ts` and `frontend/src/types/index.ts` must be kept in sync manually. The key shared types are `UATAnalysisResult`, `AnalysisResult`, and `ClusterSummary`. When adding fields to either, update both files and `mockAnalysis.ts`.
 
 ---
 
-## Priority Evolutions (in order)
+## Claude Prompt Rules
 
-1. Streaming Claude responses (show tokens as they arrive)
-2. Export analysis to PDF
-3. Auth layer (single-user JWT or Clerk)
-4. Multi-project comparison view
-5. Jira/ADO integration to create tickets from impacts
-6. Embedding-based document retrieval (RAG) for large document sets
-7. PostgreSQL migration for multi-user production
+- All prompts built in `promptBuilder.ts` — never inline strings in routes or services
+- Always instruct Claude to return **raw JSON only** (no markdown fences, no prose)
+- Cap extracted text at 30k chars per file
+- AS-IS and TO-BE content must appear in separate prompt sections
+- Test prompt changes with `CLAUDE_MOCK=true` first
+- Images attached as base64 vision blocks **before** the text prompt block
+
+---
+
+## Invariants — Do Not Break
+
+- **Mock mode**: `CLAUDE_MOCK=true` must always return valid fixture data. Touch `mockAnalysis.ts` when changing `AnalysisResult` shape.
+- **DOMPurify**: prototype HTML is sanitised before iframe injection in `PrototypePreview.tsx`. Never remove this.
+- **SQLite WAL + FK**: both enabled at DB init; do not disable.
+- **Uploads gitignored**: `backend/uploads/` and `backend/data/` are local-only.
+- **Risk overrides are effective priority**: all cluster queries must `COALESCE(ro.overridden_priority, d.priority)` — the raw `d.priority` alone is wrong after an override.
+- **FileBucket values**: `as-is`, `to-be`, `business-rules` (not `screenshot` — that was an earlier design).

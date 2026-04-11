@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Loader2, Send, MessageSquare, AlertCircle, Copy, Check, Search, BookOpen, ChevronRight } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import axios from 'axios';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
@@ -18,14 +19,13 @@ type StartMode = 'full' | 'clarification' | null;
 const FULL_RETRIEVAL_QUESTION = (impact: Impact) =>
   `Retrieve and summarise everything available in the project documentation about **${impact.area}**. Include: the current AS-IS behaviour, all TO-BE changes, any business rules, affected fields or screens, and any open questions or assumptions. Cite each passage with its section title.`;
 
-const CLARIFICATION_PLACEHOLDER = `Scrivi la tua domanda specifica su questo impatto…`;
-
 function renderMarkdown(text: string): string {
   const raw = marked.parse(text, { async: false }) as string;
   return DOMPurify.sanitize(raw);
 }
 
 function CopyButton({ text }: { text: string }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   return (
     <button
@@ -35,7 +35,7 @@ function CopyButton({ text }: { text: string }) {
           setTimeout(() => setCopied(false), 2000);
         });
       }}
-      title="Copia risposta"
+      title={t('deepDive.copyAnswer')}
       className="shrink-0 p-1 rounded text-text-muted hover:text-text-secondary hover:bg-surface-hover transition-colors"
     >
       {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
@@ -44,6 +44,7 @@ function CopyButton({ text }: { text: string }) {
 }
 
 export default function ImpactDeepDive({ impact, projectId, analysisId }: ImpactDeepDiveProps) {
+  const { t } = useTranslation();
   const [mode, setMode] = useState<Mode>('idle');
   const [startMode, setStartMode] = useState<StartMode>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -112,7 +113,7 @@ export default function ImpactDeepDive({ impact, projectId, analysisId }: Impact
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <MessageSquare size={13} className="text-purple-deep" />
-          <span className="text-xs font-semibold text-text-muted uppercase tracking-wide">Approfondisci impatto</span>
+          <span className="text-xs font-semibold text-text-muted uppercase tracking-wide">{t('deepDive.title')}</span>
         </div>
         {mode === 'idle' && (
           <button
@@ -120,7 +121,7 @@ export default function ImpactDeepDive({ impact, projectId, analysisId }: Impact
             className="btn-secondary text-xs py-1 px-3 flex items-center gap-1.5"
           >
             <Search size={12} />
-            Approfondisci impatto
+            {t('deepDive.open')}
           </button>
         )}
         {mode !== 'idle' && (
@@ -128,24 +129,21 @@ export default function ImpactDeepDive({ impact, projectId, analysisId }: Impact
             onClick={() => { setMode('idle'); setStartMode(null); setMessages([]); setError(''); setInput(''); }}
             className="text-xs text-text-muted hover:text-text-secondary transition-colors"
           >
-            Chiudi
+            {t('common.close')}
           </button>
         )}
       </div>
 
       {/* Idle hint */}
       {mode === 'idle' && (
-        <p className="text-xs text-text-muted">
-          Recupera i passaggi rilevanti dalla documentazione del progetto e avvia una conversazione focalizzata su questo impatto.
-        </p>
+        <p className="text-xs text-text-muted">{t('deepDive.subtitle')}</p>
       )}
 
       {/* Intent selection */}
       {mode === 'selecting' && (
         <div className="space-y-2">
-          <p className="text-xs text-text-secondary font-medium">Come vuoi procedere?</p>
+          <p className="text-xs text-text-secondary font-medium">{t('deepDive.howToProceed')}</p>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {/* Option A: full retrieval */}
             <button
               onClick={handleSelectFullRetrieval}
               className="group text-left rounded-lg border border-surface-border bg-surface p-3.5 hover:border-purple-deep hover:bg-purple-50/30 transition-all"
@@ -156,17 +154,16 @@ export default function ImpactDeepDive({ impact, projectId, analysisId }: Impact
                 </div>
                 <div>
                   <div className="text-sm font-semibold text-text-primary flex items-center gap-1">
-                    Analisi completa
+                    {t('deepDive.fullAnalysis')}
                     <ChevronRight size={12} className="text-text-muted" />
                   </div>
                   <div className="mt-0.5 text-xs text-text-muted leading-relaxed">
-                    Recupera tutto ciò che la documentazione dice su questo impatto: stato attuale, variazioni TO-BE, regole di business, schermate coinvolte.
+                    {t('deepDive.fullAnalysisHint')}
                   </div>
                 </div>
               </div>
             </button>
 
-            {/* Option B: targeted question */}
             <button
               onClick={handleSelectClarification}
               className="group text-left rounded-lg border border-surface-border bg-surface p-3.5 hover:border-purple-deep hover:bg-purple-50/30 transition-all"
@@ -177,11 +174,11 @@ export default function ImpactDeepDive({ impact, projectId, analysisId }: Impact
                 </div>
                 <div>
                   <div className="text-sm font-semibold text-text-primary flex items-center gap-1">
-                    Chiarimento mirato
+                    {t('deepDive.targetedClarification')}
                     <ChevronRight size={12} className="text-text-muted" />
                   </div>
                   <div className="mt-0.5 text-xs text-text-muted leading-relaxed">
-                    Fai una domanda specifica su un aspetto di questo impatto: un campo, una regola, un comportamento preciso.
+                    {t('deepDive.targetedClarificationHint')}
                   </div>
                 </div>
               </div>
@@ -195,7 +192,6 @@ export default function ImpactDeepDive({ impact, projectId, analysisId }: Impact
         <>
           <div className="space-y-4 max-h-[32rem] overflow-y-auto pr-1">
             {messages.map((msg, i) => {
-              // Hide the auto-generated first user message in full-retrieval mode
               if (startMode === 'full' && i === 0 && msg.role === 'user') return null;
               return (
               <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
@@ -241,7 +237,7 @@ export default function ImpactDeepDive({ impact, projectId, analysisId }: Impact
                 <div className="w-6 h-6 rounded-full shrink-0 bg-surface border border-surface-border flex items-center justify-center text-[10px] font-bold text-text-muted">AI</div>
                 <div className="flex items-center gap-2 text-text-muted text-sm py-1">
                   <Loader2 size={13} className="animate-spin text-purple-deep" />
-                  <span>Recupero documentazione rilevante…</span>
+                  <span>{t('deepDive.retrieving')}</span>
                 </div>
               </div>
             )}
@@ -261,7 +257,7 @@ export default function ImpactDeepDive({ impact, projectId, analysisId }: Impact
               ref={inputRef}
               className="input text-sm resize-none flex-1"
               rows={2}
-              placeholder={CLARIFICATION_PLACEHOLDER}
+              placeholder={t('deepDive.questionPlaceholder')}
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}

@@ -116,6 +116,71 @@ db.exec(`
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
   );
 
+  CREATE TABLE IF NOT EXISTS ingestion_runs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    uat_analysis_id TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    defect_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    FOREIGN KEY (uat_analysis_id) REFERENCES uat_analyses(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS defects (
+    id TEXT PRIMARY KEY,
+    external_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    ingestion_run_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    priority TEXT NOT NULL,
+    status TEXT,
+    application TEXT,
+    module TEXT,
+    description TEXT,
+    resolution TEXT,
+    detected_by TEXT,
+    assigned_to TEXT,
+    detected_date TEXT,
+    closed_date TEXT,
+    environment TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    FOREIGN KEY (ingestion_run_id) REFERENCES ingestion_runs(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_defects_project ON defects(project_id);
+  CREATE INDEX IF NOT EXISTS idx_defects_ingestion ON defects(ingestion_run_id);
+
+  CREATE TABLE IF NOT EXISTS cluster_assignments (
+    id TEXT PRIMARY KEY,
+    uat_analysis_id TEXT NOT NULL,
+    defect_id TEXT NOT NULL,
+    cluster_key TEXT NOT NULL,
+    cluster_name TEXT NOT NULL,
+    method TEXT NOT NULL,
+    matched_keywords TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (uat_analysis_id) REFERENCES uat_analyses(id) ON DELETE CASCADE,
+    FOREIGN KEY (defect_id) REFERENCES defects(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_cluster_assignments_analysis ON cluster_assignments(uat_analysis_id);
+  CREATE INDEX IF NOT EXISTS idx_cluster_assignments_cluster ON cluster_assignments(uat_analysis_id, cluster_key);
+
+  CREATE TABLE IF NOT EXISTS cluster_configs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    cluster_key TEXT NOT NULL,
+    cluster_name TEXT NOT NULL,
+    keywords TEXT NOT NULL DEFAULT '[]',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    UNIQUE(project_id, cluster_key)
+  );
+
   CREATE TABLE IF NOT EXISTS open_question_feedback (
     id TEXT PRIMARY KEY,
     analysis_id TEXT NOT NULL,
@@ -126,6 +191,22 @@ db.exec(`
     FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE,
     UNIQUE(analysis_id, question_text)
   );
+
+  CREATE TABLE IF NOT EXISTS risk_overrides (
+    id TEXT PRIMARY KEY,
+    defect_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    original_priority TEXT NOT NULL,
+    overridden_priority TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (defect_id) REFERENCES defects(id) ON DELETE CASCADE,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    UNIQUE(defect_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_risk_overrides_project ON risk_overrides(project_id);
 `);
 
 // --- Migration: add progress_step to analyses if missing ---

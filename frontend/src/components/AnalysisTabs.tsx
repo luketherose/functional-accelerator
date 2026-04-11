@@ -7,6 +7,7 @@ import {
   HelpCircle, Lightbulb, AlertTriangle, ChevronDown, ChevronUp,
   ThumbsUp, ThumbsDown, MessageSquarePlus, CheckCircle2, XCircle
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import ImpactPrototype from './ImpactPrototype';
 import ImpactDeepDive from './ImpactDeepDive';
 import { analysisApi } from '../services/api';
@@ -19,11 +20,11 @@ interface AnalysisTabsProps {
 
 type TabId = 'summary' | 'functional' | 'uiux' | 'questions';
 
-const TABS: { id: TabId; label: string; icon: typeof FileText }[] = [
-  { id: 'summary', label: 'Executive Summary', icon: FileText },
-  { id: 'functional', label: 'Functional Impacts', icon: Layers },
-  { id: 'uiux', label: 'UI/UX Impacts', icon: Monitor },
-  { id: 'questions', label: 'Open Questions', icon: HelpCircle },
+const TAB_DEFS: { id: TabId; labelKey: string; icon: typeof FileText }[] = [
+  { id: 'summary', labelKey: 'analysisTabs.overview', icon: FileText },
+  { id: 'functional', labelKey: 'analysisTabs.functionalImpacts', icon: Layers },
+  { id: 'uiux', labelKey: 'analysisTabs.uiUxImpacts', icon: Monitor },
+  { id: 'questions', labelKey: 'analysisTabs.openQuestions', icon: HelpCircle },
 ];
 
 function SeverityBadge({ severity }: { severity: string }) {
@@ -42,6 +43,7 @@ interface FeedbackBarProps {
 }
 
 function FeedbackBar({ impactId, projectId, analysisId, feedback, onSaved, onDeleted }: FeedbackBarProps) {
+  const { t } = useTranslation();
   const [showMotivation, setShowMotivation] = useState(false);
   const [motivation, setMotivation] = useState(feedback?.motivation ?? '');
   const [saving, setSaving] = useState(false);
@@ -77,11 +79,11 @@ function FeedbackBar({ impactId, projectId, analysisId, feedback, onSaved, onDel
   return (
     <div className="mt-3 space-y-2" onClick={e => e.stopPropagation()}>
       <div className="flex items-center gap-2">
-        <span className="text-xs text-text-muted">Feedback:</span>
+        <span className="text-xs text-text-muted">{t('analysisTabs.feedbackLabel')}</span>
         <button
           onClick={() => handleThumb('positive')}
           disabled={saving}
-          title="Mark as correct"
+          title={t('analysisTabs.markCorrect')}
           className={`p-1.5 rounded-lg border transition-colors ${isPositive ? 'bg-emerald-50 border-emerald-300 text-emerald-600' : 'border-surface-border text-text-muted hover:text-emerald-600 hover:border-emerald-200'}`}
         >
           <ThumbsUp size={13} />
@@ -89,7 +91,7 @@ function FeedbackBar({ impactId, projectId, analysisId, feedback, onSaved, onDel
         <button
           onClick={() => handleThumb('negative')}
           disabled={saving}
-          title="Mark as incorrect"
+          title={t('analysisTabs.markIncorrect')}
           className={`p-1.5 rounded-lg border transition-colors ${isNegative ? 'bg-red-50 border-red-300 text-red-500' : 'border-surface-border text-text-muted hover:text-red-500 hover:border-red-200'}`}
         >
           <ThumbsDown size={13} />
@@ -97,19 +99,19 @@ function FeedbackBar({ impactId, projectId, analysisId, feedback, onSaved, onDel
         {isNegative && feedback?.motivation && (
           <span className="text-xs text-text-muted italic truncate max-w-xs">"{feedback.motivation}"</span>
         )}
-        {isPositive && <span className="text-xs text-emerald-600">Confirmed correct</span>}
+        {isPositive && <span className="text-xs text-emerald-600">{t('analysisTabs.confirmedCorrect')}</span>}
       </div>
       {showMotivation && (
         <div className="flex gap-2 items-end">
           <textarea
             className="input text-xs resize-none flex-1"
             rows={2}
-            placeholder="Why is this impact wrong or inaccurate? (optional — but helps the next re-run)"
+            placeholder={t('analysisTabs.incorrectReason')}
             value={motivation}
             onChange={e => setMotivation(e.target.value)}
           />
           <button onClick={handleSaveMotivation} disabled={saving} className="btn-primary text-xs py-1.5 px-3 shrink-0 self-end">
-            Save
+            {t('common.save')}
           </button>
         </div>
       )}
@@ -182,6 +184,7 @@ interface OpenQuestionCardProps {
 }
 
 function OpenQuestionCard({ question, projectId, analysisId, feedback, onSaved, onDeleted }: OpenQuestionCardProps) {
+  const { t } = useTranslation();
   const [showAnswer, setShowAnswer] = useState(!!feedback?.answer);
   const [answer, setAnswer] = useState(feedback?.answer ?? '');
   const [saving, setSaving] = useState(false);
@@ -233,7 +236,7 @@ function OpenQuestionCard({ question, projectId, analysisId, feedback, onSaved, 
       {/* Existing answer preview */}
       {feedback?.answer && !showAnswer && (
         <div className="ml-9 bg-blue-50/60 border border-blue-100 rounded-lg px-3 py-2 text-xs text-blue-800">
-          <span className="font-semibold">Risposta: </span>{feedback.answer}
+          <span className="font-semibold">{t('analysisTabs.answerLabel')}</span>{feedback.answer}
         </div>
       )}
 
@@ -243,27 +246,27 @@ function OpenQuestionCard({ question, projectId, analysisId, feedback, onSaved, 
           <textarea
             className="input text-xs resize-none flex-1"
             rows={2}
-            placeholder="Scrivi una risposta o annotazione per raffinare la prossima analisi…"
+            placeholder={t('analysisTabs.answerPlaceholder')}
             value={answer}
             onChange={e => setAnswer(e.target.value)}
             autoFocus
           />
           <button onClick={handleSaveAnswer} disabled={saving} className="btn-primary text-xs py-1.5 px-3 shrink-0 self-end">
-            Salva
+            {t('common.save')}
           </button>
           <button onClick={() => setShowAnswer(false)} className="btn-secondary text-xs py-1.5 px-3 shrink-0 self-end">
-            Annulla
+            {t('common.cancel')}
           </button>
         </div>
       )}
 
       {/* Action bar */}
       <div className="ml-9 flex items-center gap-2">
-        <span className="text-xs text-text-muted">Feedback:</span>
+        <span className="text-xs text-text-muted">{t('analysisTabs.feedbackLabel')}</span>
         <button
           onClick={() => handleSentiment('positive')}
           disabled={saving}
-          title="Domanda ancora aperta / rilevante"
+          title={t('analysisTabs.questionStillOpen')}
           className={`p-1.5 rounded-lg border transition-colors text-xs flex items-center gap-1 ${isConfirmed ? 'bg-emerald-50 border-emerald-300 text-emerald-600' : 'border-surface-border text-text-muted hover:text-emerald-600 hover:border-emerald-200'}`}
         >
           <ThumbsUp size={11} />
@@ -271,7 +274,7 @@ function OpenQuestionCard({ question, projectId, analysisId, feedback, onSaved, 
         <button
           onClick={() => handleSentiment('negative')}
           disabled={saving}
-          title="Chiudi / non rilevante"
+          title={t('analysisTabs.questionClose')}
           className={`p-1.5 rounded-lg border transition-colors text-xs flex items-center gap-1 ${isDismissed ? 'bg-red-50 border-red-300 text-red-500' : 'border-surface-border text-text-muted hover:text-red-500 hover:border-red-200'}`}
         >
           <ThumbsDown size={11} />
@@ -279,19 +282,20 @@ function OpenQuestionCard({ question, projectId, analysisId, feedback, onSaved, 
         <button
           onClick={() => { setShowAnswer(true); setAnswer(feedback?.answer ?? ''); }}
           disabled={saving}
-          title="Aggiungi risposta"
+          title={t('analysisTabs.addAnswer')}
           className="p-1.5 rounded-lg border border-surface-border text-text-muted hover:text-blue-600 hover:border-blue-200 transition-colors"
         >
           <MessageSquarePlus size={11} />
         </button>
-        {isDismissed && <span className="text-xs text-slate-400 ml-1">Chiusa</span>}
-        {isConfirmed && !isDismissed && <span className="text-xs text-emerald-600 ml-1">Confermata aperta</span>}
+        {isDismissed && <span className="text-xs text-slate-400 ml-1">{t('analysisTabs.questionClosed')}</span>}
+        {isConfirmed && !isDismissed && <span className="text-xs text-emerald-600 ml-1">{t('analysisTabs.questionConfirmedOpen')}</span>}
       </div>
     </div>
   );
 }
 
 export default function AnalysisTabs({ result, projectId, analysisId }: AnalysisTabsProps) {
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<TabId>('summary');
   const [expandedFuncIds, setExpandedFuncIds] = useState<Set<string>>(new Set());
   const [expandedUiIds, setExpandedUiIds] = useState<Set<string>>(new Set());
@@ -325,14 +329,14 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
     <div className="flex flex-col h-full">
       {/* Tabs header */}
       <div className="flex border-b border-surface-border bg-white overflow-x-auto shrink-0">
-        {TABS.map(tab => (
+        {TAB_DEFS.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={`tab flex items-center gap-2 ${activeTab === tab.id ? 'tab-active' : ''}`}
           >
             <tab.icon size={14} />
-            {tab.label}
+            {t(tab.labelKey)}
           </button>
         ))}
       </div>
@@ -344,16 +348,16 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
         {activeTab === 'summary' && (
           <div className="space-y-6 w-full">
             <div className="card p-6">
-              <h3 className="text-sm font-semibold text-text-muted uppercase tracking-wide mb-3">Overview</h3>
+              <h3 className="text-sm font-semibold text-text-muted uppercase tracking-wide mb-3">{t('analysisTabs.overview')}</h3>
               <p className="text-text-secondary leading-relaxed">{result.executiveSummary}</p>
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {[
-                { label: 'Functional Impacts', value: result.functionalImpacts.length, color: 'text-blue-600' },
-                { label: 'UI/UX Impacts', value: result.uiUxImpacts.length, color: 'text-violet-600' },
-                { label: 'Affected Screens', value: result.affectedScreens.length, color: 'text-amber-600' },
-                { label: 'Open Questions', value: result.openQuestions.length, color: 'text-red-500' },
+                { label: t('analysisTabs.functionalImpacts'), value: result.functionalImpacts.length, color: 'text-blue-600' },
+                { label: t('analysisTabs.uiUxImpacts'), value: result.uiUxImpacts.length, color: 'text-violet-600' },
+                { label: t('analysisTabs.affectedScreens'), value: result.affectedScreens.length, color: 'text-amber-600' },
+                { label: t('analysisTabs.openQuestions'), value: result.openQuestions.length, color: 'text-red-500' },
               ].map(stat => (
                 <div key={stat.label} className="card p-4 text-center">
                   <div className={`text-2xl font-bold ${stat.color}`}>{stat.value}</div>
@@ -366,7 +370,7 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
               <div className="card p-5">
                 <div className="flex items-center gap-2 mb-3">
                   <Lightbulb size={15} className="text-amber-500" />
-                  <h3 className="text-sm font-semibold text-text-primary">Assumptions</h3>
+                  <h3 className="text-sm font-semibold text-text-primary">{t('analysisTabs.assumptions')}</h3>
                 </div>
                 <ul className="space-y-2">
                   {result.assumptions.map((a, i) => (
@@ -383,7 +387,7 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
               <div className="card p-5">
                 <div className="flex items-center gap-2 mb-3">
                   <BookOpen size={15} className="text-purple-deep" />
-                  <h3 className="text-sm font-semibold text-text-primary">Extracted Business Rules</h3>
+                  <h3 className="text-sm font-semibold text-text-primary">{t('analysisTabs.businessRules')}</h3>
                 </div>
                 <div className="space-y-2">
                   {result.businessRulesExtracted.map((br: BusinessRule) => (
@@ -403,10 +407,10 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
         {activeTab === 'functional' && (
           <div className="space-y-3 w-full">
             <p className="text-sm text-text-muted">
-              {result.functionalImpacts.length} functional impacts identified — click to expand, thumbs to give feedback
+              {t('analysisTabs.functionalCount', { count: result.functionalImpacts.length })}
             </p>
             {result.functionalImpacts.length === 0 ? (
-              <div className="card p-8 text-center text-text-muted text-sm">No functional impacts recorded.</div>
+              <div className="card p-8 text-center text-text-muted text-sm">{t('analysisTabs.noFunctionalImpacts')}</div>
             ) : (
               result.functionalImpacts.map(impact => (
                 <ExpandableImpactCard
@@ -431,10 +435,10 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
         {activeTab === 'uiux' && (
           <div className="space-y-3 w-full">
             <p className="text-sm text-text-muted">
-              {result.uiUxImpacts.length} UI/UX impacts identified — click to expand prototype + deep dive
+              {t('analysisTabs.uiCount', { count: result.uiUxImpacts.length })}
             </p>
             {result.uiUxImpacts.length === 0 ? (
-              <div className="card p-8 text-center text-text-muted text-sm">No UI/UX impacts recorded.</div>
+              <div className="card p-8 text-center text-text-muted text-sm">{t('analysisTabs.noUiImpacts')}</div>
             ) : (
               result.uiUxImpacts.map((impact: Impact) => (
                 <ExpandableImpactCard
@@ -457,14 +461,14 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
             {result.proposedChanges.length > 0 && (
               <div className="card overflow-hidden mt-6">
                 <div className="px-4 py-3 border-b border-surface-border">
-                  <h3 className="text-sm font-semibold text-text-primary">Proposed Screen Changes</h3>
+                  <h3 className="text-sm font-semibold text-text-primary">{t('analysisTabs.proposedChanges')}</h3>
                 </div>
                 <table className="w-full text-sm">
                   <thead className="bg-surface">
                     <tr>
-                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-muted">Screen</th>
-                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-muted">Change</th>
-                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-muted">Priority</th>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-muted">{t('analysisTabs.colScreen')}</th>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-muted">{t('analysisTabs.colChange')}</th>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-muted">{t('analysisTabs.colPriority')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-surface-border">
@@ -487,9 +491,9 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
         {/* Open Questions */}
         {activeTab === 'questions' && (
           <div className="space-y-3 w-full">
-            <p className="text-sm text-text-muted">Annota o rispondi alle domande aperte — il feedback verrà considerato nella prossima analisi.</p>
+            <p className="text-sm text-text-muted">{t('analysisTabs.openQuestionsHint')}</p>
             {result.openQuestions.length === 0 ? (
-              <div className="card p-8 text-center text-text-muted text-sm">Nessuna domanda aperta.</div>
+              <div className="card p-8 text-center text-text-muted text-sm">{t('analysisTabs.noOpenQuestions')}</div>
             ) : (
               result.openQuestions.map((q, i) => (
                 <OpenQuestionCard

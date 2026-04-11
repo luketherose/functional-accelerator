@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Upload, FileText, Image, X, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { FileBucket } from '../types';
 import { filesApi } from '../services/api';
 
@@ -17,31 +18,20 @@ interface UploadingFile {
   error?: string;
 }
 
-const BUCKET_META: Record<FileBucket, { label: string; color: string; description: string }> = {
-  'as-is': {
-    label: 'As-Is',
-    color: 'border-blue-300 bg-blue-50/50',
-    description: 'Current state documentation',
-  },
-  'to-be': {
-    label: 'To-Be',
-    color: 'border-violet-300 bg-violet-50/50',
-    description: 'Requirements & target state',
-  },
-  'business-rules': {
-    label: 'Business Rules',
-    color: 'border-emerald-300 bg-emerald-50/50',
-    description: 'Provided BR — taken as factum positum',
-  },
+const BUCKET_COLOR: Record<FileBucket, string> = {
+  'as-is': 'border-blue-300 bg-blue-50/50',
+  'to-be': 'border-violet-300 bg-violet-50/50',
+  'business-rules': 'border-emerald-300 bg-emerald-50/50',
 };
 
 const ACCEPTED = '.pdf,.doc,.docx,.txt,.md,.png,.jpg,.jpeg,.gif,.webp,.xlsx,.xls';
 
 export default function FileUploader({ projectId, bucket, onUploadComplete }: FileUploaderProps) {
+  const { t } = useTranslation();
   const [isDragging, setIsDragging] = useState(false);
   const [uploads, setUploads] = useState<UploadingFile[]>([]);
 
-  const meta = BUCKET_META[bucket];
+  const color = BUCKET_COLOR[bucket];
 
   const processFiles = useCallback(async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
@@ -87,7 +77,7 @@ export default function FileUploader({ projectId, bucket, onUploadComplete }: Fi
       {/* Drop zone */}
       <label
         className={`flex flex-col items-center gap-2 p-5 rounded-xl border-2 border-dashed cursor-pointer transition-all ${
-          isDragging ? 'border-purple-deep bg-brand-50 scale-[1.01]' : `${meta.color} hover:border-purple-deep/50`
+          isDragging ? 'border-purple-deep bg-brand-50 scale-[1.01]' : `${color} hover:border-purple-deep/50`
         }`}
         onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
         onDragLeave={() => setIsDragging(false)}
@@ -105,7 +95,7 @@ export default function FileUploader({ projectId, bucket, onUploadComplete }: Fi
           <p className="text-sm font-medium text-text-secondary">
             Drop files here or <span className="text-purple-deep">browse</span>
           </p>
-          <p className="text-xs text-text-muted mt-0.5">PDF, DOCX, TXT, MD, XLSX, PNG, JPG — max 20MB</p>
+          <p className="text-xs text-text-muted mt-0.5">{t('fileUploader.formats')}</p>
         </div>
       </label>
 

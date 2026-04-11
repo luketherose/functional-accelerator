@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   Play, Loader2, RefreshCw, Trash2,
   Clock, CheckCircle2, AlertCircle, FileText, History,
-  Pencil, X, Check, Database, ShieldAlert, Upload, BarChart2
+  Pencil, X, Check, Database, ShieldAlert, Upload, BarChart2, Settings2, GitCompare, Sparkles
 } from 'lucide-react';
 import type { ProjectDetail, Analysis, FileBucket, UATAnalysis } from '../types';
 import { projectsApi, analysisApi, filesApi, uatApi, parseAnalysisResult, parseUATResult } from '../services/api';
@@ -12,10 +13,16 @@ import FileList from '../components/FileList';
 import AnalysisTabs from '../components/AnalysisTabs';
 import AnalysisProgress from '../components/AnalysisProgress';
 import UATDashboard from '../components/UATDashboard';
+import UATTrend from '../components/UATTrend';
+import ClusterDrillDown from '../components/ClusterDrillDown';
+import TaxonomyEditor from '../components/TaxonomyEditor';
+import AuditTrail from '../components/AuditTrail';
+import RunComparison from '../components/RunComparison';
+import AIDefectChat from '../components/AIDefectChat';
 import PageHeader from '../components/Layout/PageHeader';
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('it-IT', {
+  return new Date(iso).toLocaleDateString('en-GB', {
     day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
   });
 }
@@ -26,6 +33,7 @@ type AnalysisPanel = 'documents' | 'history';
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { t } = useTranslation();
 
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -51,6 +59,9 @@ export default function ProjectDetailPage() {
   const [selectedUAT, setSelectedUAT] = useState<UATAnalysis | null>(null);
   const [uatUploading, setUatUploading] = useState(false);
   const [isUATRunning, setIsUATRunning] = useState(false);
+  const [uatTab, setUatTab] = useState<'overview' | 'trend' | 'compare' | 'defects' | 'audit' | 'ai'>('overview');
+  const [taxonomyOpen, setTaxonomyOpen] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -119,14 +130,18 @@ export default function ProjectDetailPage() {
     return () => clearInterval(interval);
   }, [isUATRunning, id]);
 
-  const handleUATUpload = async (file: File) => {
-    if (!id) return;
+  const handleUATUpload = async (files: File[]) => {
+    if (!id || files.length === 0) return;
     setUatUploading(true);
     try {
-      await uatApi.run(id, file);
+      const result = await uatApi.run(id, files);
       setIsUATRunning(true);
+      setPendingFiles([]);
       const list = await uatApi.list(id);
       setUatAnalyses(list);
+      if (result.warnings?.length) {
+        console.warn('[UAT] Upload warnings:', result.warnings);
+      }
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to start UAT analysis';
       alert(msg);
@@ -136,7 +151,7 @@ export default function ProjectDetailPage() {
   };
 
   const handleDeleteUAT = async (analysisId: string) => {
-    if (!id || !confirm('Eliminare questa analisi UAT?')) return;
+    if (!id || !confirm(t('projectDetail.deleteUATConfirm'))) return;
     await uatApi.delete(id, analysisId);
     if (selectedUAT?.id === analysisId) setSelectedUAT(null);
     setUatAnalyses(await uatApi.list(id));
@@ -175,7 +190,7 @@ export default function ProjectDetailPage() {
   };
 
   const handleDeleteAnalysis = async (analysisId: string) => {
-    if (!id || !confirm('Eliminare questa analisi?')) return;
+    if (!id || !confirm(t('projectDetail.deleteAnalysisConfirm'))) return;
     await analysisApi.delete(id, analysisId);
     if (selectedAnalysis?.id === analysisId) setSelectedAnalysis(null);
     load();
@@ -205,7 +220,7 @@ export default function ProjectDetailPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64 text-text-muted">
-        <Loader2 size={20} className="animate-spin mr-2" /> Caricamento…
+        <Loader2 size={20} className="animate-spin mr-2" /> {t('common.loading')}
       </div>
     );
   }
@@ -214,8 +229,8 @@ export default function ProjectDetailPage() {
     return (
       <div className="p-8">
         <div className="card p-8 text-center max-w-sm mx-auto">
-          <p className="text-sm text-red-500 mb-3">{error || 'Project not found'}</p>
-          <button className="btn-secondary" onClick={() => navigate('/')}>← Progetti</button>
+          <p className="text-sm text-red-500 mb-3">{error || t('projectDetail.notFound')}</p>
+          <button className="btn-secondary" onClick={() => navigate('/')}>{t('nav.backToProjects')}</button>
         </div>
       </div>
     );
@@ -232,13 +247,13 @@ export default function ProjectDetailPage() {
         <div className="border-b border-surface-border bg-white px-8 py-5 shrink-0">
           <div className="flex items-start gap-4">
             <div className="flex-1 space-y-2">
-              <input className="input text-base font-semibold" value={editName} onChange={e => setEditName(e.target.value)} placeholder="Nome progetto" autoFocus />
-              <input className="input text-sm" value={editDescription} onChange={e => setEditDescription(e.target.value)} placeholder="Descrizione (opzionale)" />
+              <input className="input text-base font-semibold" value={editName} onChange={e => setEditName(e.target.value)} placeholder={t('projectDetail.nameLabel')} autoFocus />
+              <input className="input text-sm" value={editDescription} onChange={e => setEditDescription(e.target.value)} placeholder={t('projectDetail.descriptionLabel')} />
             </div>
             <div className="flex items-center gap-2 pt-1">
-              <button className="btn-secondary text-sm py-1.5" onClick={() => setEditing(false)}><X size={14} /> Annulla</button>
+              <button className="btn-secondary text-sm py-1.5" onClick={() => setEditing(false)}><X size={14} /> {t('common.cancel')}</button>
               <button className="btn-primary text-sm py-1.5" onClick={handleSaveEdit} disabled={saving || !editName.trim()}>
-                {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Salva
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} {t('common.save')}
               </button>
             </div>
           </div>
@@ -246,11 +261,11 @@ export default function ProjectDetailPage() {
       ) : (
         <PageHeader
           title={project.name}
-          subtitle={project.description || 'Nessuna descrizione'}
-          breadcrumbs={[{ label: 'Progetti', href: '/' }, { label: project.name }]}
+          subtitle={project.description || t('common.noDescription')}
+          breadcrumbs={[{ label: t('projects.title'), href: '/' }, { label: project.name }]}
           actions={
-            <button className="btn-secondary text-sm" onClick={startEditing} title="Modifica progetto">
-              <Pencil size={14} /> Modifica
+            <button className="btn-secondary text-sm" onClick={startEditing} title={t('common.edit')}>
+              <Pencil size={14} /> {t('common.edit')}
             </button>
           }
         />
@@ -267,7 +282,7 @@ export default function ProjectDetailPage() {
           }`}
         >
           <FileText size={14} />
-          Analisi
+          {t('projectDetail.tabAnalysis')}
         </button>
         <button
           onClick={() => setActiveView('uat')}
@@ -298,14 +313,14 @@ export default function ProjectDetailPage() {
                     onClick={() => setAnalysisPanel('documents')}
                     className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium transition-all ${analysisPanel === 'documents' ? 'bg-white shadow-sm text-text-primary' : 'text-text-muted'}`}
                   >
-                    <FileText size={12} /> Documenti
+                    <FileText size={12} /> {t('projectDetail.panelDocuments')}
                     {fileCount > 0 && <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{fileCount}</span>}
                   </button>
                   <button
                     onClick={() => setAnalysisPanel('history')}
                     className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium transition-all ${analysisPanel === 'history' ? 'bg-white shadow-sm text-text-primary' : 'text-text-muted'}`}
                   >
-                    <History size={12} /> Analisi
+                    <History size={12} /> {t('projectDetail.panelHistory')}
                     {project.analyses.length > 0 && <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{project.analyses.length}</span>}
                   </button>
                 </div>
@@ -313,11 +328,11 @@ export default function ProjectDetailPage() {
                   className="btn-primary w-full text-sm"
                   onClick={handleAnalyze}
                   disabled={hasRunningAnalysis || fileCount === 0}
-                  title={fileCount === 0 ? 'Carica prima i documenti' : ''}
+                  title={fileCount === 0 ? t('projectDetail.uploadFirst') : ''}
                 >
                   {hasRunningAnalysis
-                    ? <><Loader2 size={14} className="animate-spin" /> Analisi in corso…</>
-                    : <><Play size={14} /> Analizza Impatti</>}
+                    ? <><Loader2 size={14} className="animate-spin" /> {t('projectDetail.analyzing')}</>
+                    : <><Play size={14} /> {t('projectDetail.analyzeButton')}</>}
                 </button>
               </div>
 
@@ -354,17 +369,17 @@ export default function ProjectDetailPage() {
                       </div>
                       <div className="flex-1 min-w-0">
                         {indexStatus.pending === 0 ? (
-                          <p className="text-emerald-700 font-medium">{indexStatus.indexed}/{indexStatus.total} file indicizzati</p>
+                          <p className="text-emerald-700 font-medium">{t('projectDetail.indexed', { indexed: indexStatus.indexed, total: indexStatus.total })}</p>
                         ) : (
                           <>
-                            <p className="text-amber-700 font-medium">{reindexing ? 'Indicizzazione…' : `${indexStatus.pending} file non ancora indicizzati`}</p>
-                            <p className="text-amber-600 mt-0.5">{indexStatus.indexed}/{indexStatus.total} pronti per RAG</p>
+                            <p className="text-amber-700 font-medium">{reindexing ? t('projectDetail.indexing') : t('projectDetail.pendingIndex', { pending: indexStatus.pending })}</p>
+                            <p className="text-amber-600 mt-0.5">{t('projectDetail.pendingIndexSub', { indexed: indexStatus.indexed, total: indexStatus.total })}</p>
                           </>
                         )}
                       </div>
                       {indexStatus.pending > 0 && !reindexing && (
                         <button onClick={handleReindex} className="btn-secondary text-xs py-1 px-2 shrink-0">
-                          <RefreshCw size={11} /> Indicizza
+                          <RefreshCw size={11} /> {t('projectDetail.indexButton')}
                         </button>
                       )}
                     </div>
@@ -377,9 +392,9 @@ export default function ProjectDetailPage() {
                 <div className="p-5 space-y-3 flex-1 overflow-y-auto">
                   {project.analyses.length === 0 ? (
                     <div className="text-center py-8">
-                      <p className="text-xs text-text-muted mb-3">Nessuna analisi ancora.</p>
+                      <p className="text-xs text-text-muted mb-3">{t('projectDetail.noAnalysisYet')}</p>
                       <button onClick={handleAnalyze} className="btn-primary text-xs" disabled={fileCount === 0}>
-                        <Play size={12} /> Prima analisi
+                        <Play size={12} /> {t('projectDetail.firstAnalysis')}
                       </button>
                     </div>
                   ) : (
@@ -435,8 +450,8 @@ export default function ProjectDetailPage() {
                     <Play size={22} className="text-text-muted" />
                   </div>
                   <div className="text-center">
-                    <p className="text-sm font-medium text-text-primary">Pronto per l'analisi</p>
-                    <p className="text-xs text-text-muted mt-1 max-w-xs">Carica i documenti as-is e to-be, poi clicca <strong>Analizza Impatti</strong>.</p>
+                    <p className="text-sm font-medium text-text-primary">{t('projectDetail.readyTitle')}</p>
+                    <p className="text-xs text-text-muted mt-1 max-w-xs">{t('projectDetail.readyHint')}</p>
                   </div>
                 </div>
               )}
@@ -444,9 +459,9 @@ export default function ProjectDetailPage() {
               {selectedAnalysis?.status === 'error' && (
                 <div className="flex-1 flex flex-col items-center justify-center gap-3">
                   <AlertCircle size={28} className="text-red-400" />
-                  <p className="text-sm font-medium text-text-primary">Analisi fallita</p>
+                  <p className="text-sm font-medium text-text-primary">{t('projectDetail.analysisFailed')}</p>
                   <p className="text-xs text-text-muted max-w-sm text-center">{selectedAnalysis.error_message}</p>
-                  <button className="btn-secondary text-xs mt-2" onClick={handleAnalyze}><RefreshCw size={12} /> Riprova</button>
+                  <button className="btn-secondary text-xs mt-2" onClick={handleAnalyze}><RefreshCw size={12} /> {t('common.retry')}</button>
                 </div>
               )}
 
@@ -464,27 +479,61 @@ export default function ProjectDetailPage() {
             <div className="w-80 xl:w-96 shrink-0 border-r border-surface-border overflow-y-auto bg-white">
               <div className="p-5 space-y-4">
                 <div>
-                  <p className="text-xs font-semibold text-text-primary mb-2">Carica Export ALM</p>
-                  <label className={`flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 border-dashed transition-colors cursor-pointer ${uatUploading ? 'border-brand-200 bg-brand-50' : 'border-surface-border hover:border-brand-200 hover:bg-surface'}`}>
+                  <p className="text-xs font-semibold text-text-primary mb-2">{t('projectDetail.uploadALMTitle')}</p>
+                  <label className={`flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 border-dashed transition-colors cursor-pointer ${uatUploading || isUATRunning ? 'border-brand-200 bg-brand-50 cursor-default' : pendingFiles.length > 0 ? 'border-brand-300 bg-brand-50' : 'border-surface-border hover:border-brand-200 hover:bg-surface'}`}>
                     <input
                       type="file"
                       accept=".xlsx,.xls,.csv"
+                      multiple
                       className="hidden"
                       disabled={uatUploading || isUATRunning}
-                      onChange={e => { const f = e.target.files?.[0]; if (f) handleUATUpload(f); e.target.value = ''; }}
+                      onChange={e => {
+                        const files = Array.from(e.target.files ?? []);
+                        if (files.length > 0) setPendingFiles(files);
+                        e.target.value = '';
+                      }}
                     />
                     {uatUploading || isUATRunning
                       ? <Loader2 size={18} className="animate-spin text-purple-deep" />
-                      : <Upload size={18} className="text-text-muted" />}
+                      : <Upload size={18} className={pendingFiles.length > 0 ? 'text-purple-deep' : 'text-text-muted'} />}
                     <span className="text-xs text-text-muted text-center">
-                      {uatUploading ? 'Caricamento…' : isUATRunning ? 'Analisi in corso…' : 'Trascina un file ALM Excel / CSV oppure clicca'}
+                      {uatUploading
+                        ? t('projectDetail.uploadingLabel')
+                        : isUATRunning
+                        ? t('projectDetail.analysisRunning')
+                        : pendingFiles.length > 0
+                        ? t('projectDetail.filesSelected', { count: pendingFiles.length })
+                        : t('projectDetail.uploadDropzone')}
                     </span>
                   </label>
+
+                  {/* Selected file chips */}
+                  {pendingFiles.length > 0 && !uatUploading && !isUATRunning && (
+                    <div className="mt-2 space-y-1">
+                      {pendingFiles.map((f, i) => (
+                        <div key={i} className="flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface border border-surface-border text-[11px]">
+                          <span className="truncate text-text-secondary flex-1">{f.name}</span>
+                          <button
+                            onClick={() => setPendingFiles(prev => prev.filter((_, j) => j !== i))}
+                            className="shrink-0 text-text-muted hover:text-red-500 transition-colors"
+                          >
+                            <X size={11} />
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => handleUATUpload(pendingFiles)}
+                        className="btn-primary w-full text-xs mt-1"
+                      >
+                        <Play size={12} /> {t('projectDetail.startAnalysis', { count: pendingFiles.length })}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {uatAnalyses.length > 0 && (
                   <div className="space-y-2">
-                    <p className="text-xs font-semibold text-text-primary">Storico</p>
+                    <p className="text-xs font-semibold text-text-primary">{t('projectDetail.historyTitle')}</p>
                     {uatAnalyses.map((ua: UATAnalysis) => {
                       const isSelected = selectedUAT?.id === ua.id;
                       return (
@@ -526,47 +575,165 @@ export default function ProjectDetailPage() {
 
             {/* Right panel — UAT dashboard */}
             <div className="flex-1 overflow-hidden flex flex-col">
-              {isUATRunning && (
+              {/* UAT tab bar */}
+              <div className="flex shrink-0 border-b border-surface-border bg-white px-4 gap-1 pt-1.5">
+                <button
+                  onClick={() => setUatTab('overview')}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-all -mb-px ${uatTab === 'overview' ? 'border-purple-deep text-purple-deep' : 'border-transparent text-text-muted hover:text-text-primary'}`}
+                >
+                  <BarChart2 size={12} /> {t('projectDetail.tabOverview')}
+                </button>
+                <button
+                  onClick={() => setUatTab('trend')}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-all -mb-px ${uatTab === 'trend' ? 'border-purple-deep text-purple-deep' : 'border-transparent text-text-muted hover:text-text-primary'}`}
+                >
+                  <History size={12} /> {t('projectDetail.tabTrend')}
+                  {uatAnalyses.filter(a => a.status === 'done').length > 1 && (
+                    <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{uatAnalyses.filter(a => a.status === 'done').length}</span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setUatTab('defects')}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-all -mb-px ${uatTab === 'defects' ? 'border-purple-deep text-purple-deep' : 'border-transparent text-text-muted hover:text-text-primary'}`}
+                >
+                  <Database size={12} /> {t('projectDetail.tabDefects')}
+                  {selectedUAT?.defect_count != null && (
+                    <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{selectedUAT.defect_count}</span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setUatTab('audit')}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-all -mb-px ${uatTab === 'audit' ? 'border-purple-deep text-purple-deep' : 'border-transparent text-text-muted hover:text-text-primary'}`}
+                >
+                  <ShieldAlert size={12} /> {t('projectDetail.tabAudit')}
+                </button>
+                <button
+                  onClick={() => setUatTab('compare')}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-all -mb-px ${uatTab === 'compare' ? 'border-purple-deep text-purple-deep' : 'border-transparent text-text-muted hover:text-text-primary'}`}
+                >
+                  <GitCompare size={12} /> {t('projectDetail.tabCompare')}
+                  {uatAnalyses.filter(a => a.status === 'done').length >= 2 && (
+                    <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">
+                      {uatAnalyses.filter(a => a.status === 'done').length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setUatTab('ai')}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-all -mb-px ${uatTab === 'ai' ? 'border-purple-deep text-purple-deep' : 'border-transparent text-text-muted hover:text-text-primary'}`}
+                >
+                  <Sparkles size={12} /> {t('projectDetail.tabAI')}
+                </button>
+                <button
+                  onClick={() => setTaxonomyOpen(true)}
+                  className="ml-auto flex items-center gap-1 px-2.5 py-1.5 text-[11px] text-text-muted hover:text-purple-deep hover:bg-surface-muted rounded-lg transition-colors my-auto"
+                  title={t('projectDetail.taxonomyTitle')}
+                >
+                  <Settings2 size={12} /> {t('projectDetail.taxonomyButton')}
+                </button>
+              </div>
+
+              {/* Taxonomy editor modal */}
+              {taxonomyOpen && id && (
+                <TaxonomyEditor projectId={id} onClose={() => setTaxonomyOpen(false)} />
+              )}
+
+              {/* Trend tab */}
+              {uatTab === 'trend' && id && (
+                <UATTrend analyses={uatAnalyses} projectId={id} />
+              )}
+
+              {/* Overview tab */}
+              {uatTab === 'overview' && isUATRunning && (
                 <div className="flex-1 flex flex-col items-center justify-center gap-4">
                   <div className="w-16 h-16 rounded-2xl bg-brand-50 border border-brand-200 flex items-center justify-center">
                     <Loader2 size={26} className="animate-spin text-purple-deep" />
                   </div>
                   <div className="text-center">
-                    <p className="text-sm font-medium text-text-primary">Analisi dei defect in corso…</p>
+                    <p className="text-sm font-medium text-text-primary">{t('projectDetail.uatRunning')}</p>
                     {(() => {
                       const running = uatAnalyses.find((a: UATAnalysis) => a.status === 'running');
                       return running?.progress_step
                         ? <p className="text-xs text-amber-600 mt-1">{running.progress_step}</p>
-                        : <p className="text-xs text-text-muted mt-1">Avvio…</p>;
+                        : <p className="text-xs text-text-muted mt-1">{t('projectDetail.uatStarting')}</p>;
                     })()}
                   </div>
                 </div>
               )}
 
-              {!isUATRunning && !selectedUAT && (
+              {uatTab === 'overview' && !isUATRunning && !selectedUAT && (
                 <div className="flex-1 flex flex-col items-center justify-center gap-4 text-text-muted">
                   <div className="w-16 h-16 rounded-2xl bg-surface border-2 border-dashed border-surface-border flex items-center justify-center">
                     <ShieldAlert size={22} className="text-text-muted" />
                   </div>
                   <div className="text-center">
-                    <p className="text-sm font-medium text-text-primary">Risk Analysis</p>
-                    <p className="text-xs text-text-muted mt-1 max-w-xs">Carica un export ALM dei difetti (Excel o CSV) per generare la dashboard di rischio.</p>
+                    <p className="text-sm font-medium text-text-primary">{t('projectDetail.uatEmpty')}</p>
+                    <p className="text-xs text-text-muted mt-1 max-w-xs">{t('projectDetail.uatEmptyHint')}</p>
                   </div>
                 </div>
               )}
 
-              {!isUATRunning && selectedUAT?.status === 'error' && (
+              {uatTab === 'overview' && !isUATRunning && selectedUAT?.status === 'error' && (
                 <div className="flex-1 flex flex-col items-center justify-center gap-3">
                   <AlertCircle size={28} className="text-red-400" />
-                  <p className="text-sm font-medium text-text-primary">Analisi fallita</p>
+                  <p className="text-sm font-medium text-text-primary">{t('projectDetail.analysisFailed')}</p>
                   <p className="text-xs text-text-muted max-w-sm text-center">{selectedUAT.error_message}</p>
                 </div>
               )}
 
-              {!isUATRunning && selectedUAT && (() => {
+              {uatTab === 'overview' && !isUATRunning && selectedUAT && (() => {
                 const result = parseUATResult(selectedUAT);
-                return result ? <UATDashboard result={result} fileName={selectedUAT.file_name} /> : null;
+                return result ? (
+                  <UATDashboard
+                    result={result}
+                    analysis={selectedUAT}
+                    projectName={project.name}
+                    fileName={selectedUAT.file_name}
+                  />
+                ) : null;
               })()}
+
+              {/* Defects / Cluster drill-down tab */}
+              {uatTab === 'defects' && selectedUAT && id && (
+                <ClusterDrillDown analysis={selectedUAT} projectId={id} />
+              )}
+              {uatTab === 'defects' && !selectedUAT && (
+                <div className="flex-1 flex flex-col items-center justify-center gap-4 text-text-muted">
+                  <div className="w-16 h-16 rounded-2xl bg-surface border-2 border-dashed border-surface-border flex items-center justify-center">
+                    <Database size={22} className="text-text-muted" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-medium text-text-primary">{t('projectDetail.defectsEmpty')}</p>
+                    <p className="text-xs text-text-muted mt-1 max-w-xs">{t('projectDetail.defectsEmptyHint')}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Audit Trail tab */}
+              {uatTab === 'audit' && id && (
+                <AuditTrail projectId={id} />
+              )}
+
+              {/* Compare tab */}
+              {uatTab === 'compare' && id && (
+                <RunComparison analyses={uatAnalyses} projectId={id} />
+              )}
+
+              {/* AI Copilot tab */}
+              {uatTab === 'ai' && selectedUAT?.status === 'done' && id && (
+                <AIDefectChat analysis={selectedUAT} projectId={id} />
+              )}
+              {uatTab === 'ai' && selectedUAT?.status !== 'done' && (
+                <div className="flex-1 flex flex-col items-center justify-center gap-4 text-text-muted">
+                  <div className="w-16 h-16 rounded-2xl bg-surface border-2 border-dashed border-surface-border flex items-center justify-center">
+                    <Sparkles size={22} className="text-text-muted" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-medium text-text-primary">{t('projectDetail.aiEmpty')}</p>
+                    <p className="text-xs text-text-muted mt-1 max-w-xs">{t('projectDetail.aiEmptyHint')}</p>
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}

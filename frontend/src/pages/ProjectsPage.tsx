@@ -1,16 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Folder, Trash2, Clock, ChevronRight, Search, Zap } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { Project } from '../types';
 import { projectsApi } from '../services/api';
 import PageHeader from '../components/Layout/PageHeader';
 
-const STATUS_CONFIG: Record<string, { label: string; dot: string }> = {
-  draft:     { label: 'Draft',     dot: 'bg-slate-400' },
-  ready:     { label: 'Ready',     dot: 'bg-blue-500' },
-  analyzing: { label: 'Analyzing', dot: 'bg-amber-400' },
-  done:      { label: 'Done',      dot: 'bg-emerald-500' },
-  error:     { label: 'Error',     dot: 'bg-red-500' },
+const STATUS_DOT: Record<string, string> = {
+  draft:     'bg-slate-400',
+  ready:     'bg-blue-500',
+  analyzing: 'bg-amber-400',
+  done:      'bg-emerald-500',
+  error:     'bg-red-500',
 };
 
 function formatDate(iso: string) {
@@ -18,6 +19,7 @@ function formatDate(iso: string) {
 }
 
 function NewProjectModal({ onClose, onCreate }: { onClose: () => void; onCreate: (name: string, description: string) => Promise<void> }) {
+  const { t } = useTranslation();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
@@ -25,14 +27,14 @@ function NewProjectModal({ onClose, onCreate }: { onClose: () => void; onCreate:
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) { setError('Project name is required'); return; }
+    if (!name.trim()) { setError(t('projects.nameRequired')); return; }
     setLoading(true);
     setError('');
     try {
       await onCreate(name, description);
       onClose();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to create project');
+      setError(err instanceof Error ? err.message : t('projects.nameRequired'));
     } finally {
       setLoading(false);
     }
@@ -41,33 +43,33 @@ function NewProjectModal({ onClose, onCreate }: { onClose: () => void; onCreate:
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm" onClick={onClose}>
       <div className="card p-6 w-full max-w-md shadow-dropdown animate-fade-in" onClick={e => e.stopPropagation()}>
-        <h2 className="text-base font-semibold text-text-primary mb-5">New Project</h2>
+        <h2 className="text-base font-semibold text-text-primary mb-5">{t('projects.newProject')}</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="label">Project Name *</label>
+            <label className="label">{t('projects.nameLabel')}</label>
             <input
               className="input"
-              placeholder="e.g. Customer Portal Revamp"
+              placeholder={t('projects.namePlaceholder')}
               value={name}
               onChange={e => setName(e.target.value)}
               autoFocus
             />
           </div>
           <div>
-            <label className="label">Description</label>
+            <label className="label">{t('projects.descriptionLabel')}</label>
             <textarea
               className="input resize-none"
               rows={3}
-              placeholder="Brief description of the functional analysis scope..."
+              placeholder={t('projects.descriptionPlaceholder')}
               value={description}
               onChange={e => setDescription(e.target.value)}
             />
           </div>
           {error && <p className="text-xs text-red-500">{error}</p>}
           <div className="flex gap-2 justify-end pt-1">
-            <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+            <button type="button" className="btn-secondary" onClick={onClose}>{t('common.cancel')}</button>
             <button type="submit" className="btn-primary" disabled={loading}>
-              {loading ? 'Creating...' : 'Create Project'}
+              {loading ? t('projects.creating') : t('projects.create')}
             </button>
           </div>
         </form>
@@ -77,6 +79,7 @@ function NewProjectModal({ onClose, onCreate }: { onClose: () => void; onCreate:
 }
 
 export default function ProjectsPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -105,13 +108,13 @@ export default function ProjectsPage() {
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (!confirm('Delete this project and all its files?')) return;
+    if (!confirm(t('projects.deleteConfirm'))) return;
     setDeleting(id);
     try {
       await projectsApi.delete(id);
       setProjects(prev => prev.filter(p => p.id !== id));
     } catch {
-      alert('Failed to delete project');
+      alert(t('projects.deleteFailed'));
     } finally {
       setDeleting(null);
     }
@@ -125,11 +128,11 @@ export default function ProjectsPage() {
   return (
     <div>
       <PageHeader
-        title="Projects"
-        subtitle="Manage your functional analysis projects"
+        title={t('projects.title')}
+        subtitle={t('projects.subtitle')}
         actions={
           <button className="btn-primary" onClick={() => setShowModal(true)}>
-            <Plus size={15} /> New Project
+            <Plus size={15} /> {t('projects.newProject')}
           </button>
         }
       />
@@ -140,7 +143,7 @@ export default function ProjectsPage() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
           <input
             className="input pl-9"
-            placeholder="Search projects..."
+            placeholder={t('projects.searchPlaceholder')}
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
@@ -162,7 +165,7 @@ export default function ProjectsPage() {
         {error && (
           <div className="card p-6 text-center max-w-sm mx-auto">
             <p className="text-sm text-red-500 mb-3">{error}</p>
-            <button className="btn-secondary text-xs" onClick={load}>Retry</button>
+            <button className="btn-secondary text-xs" onClick={load}>{t('common.retry')}</button>
           </div>
         )}
 
@@ -172,14 +175,14 @@ export default function ProjectsPage() {
               <Zap size={22} className="text-purple-deep" />
             </div>
             <h3 className="text-sm font-semibold text-text-primary mb-1">
-              {search ? 'No projects match your search' : 'No projects yet'}
+              {search ? t('projects.noMatch') : t('projects.empty')}
             </h3>
             <p className="text-sm text-text-muted mb-5">
-              {search ? 'Try a different search term.' : 'Create your first functional analysis project to get started.'}
+              {search ? t('projects.noMatchHint') : t('projects.emptyHint')}
             </p>
             {!search && (
               <button className="btn-primary" onClick={() => setShowModal(true)}>
-                <Plus size={14} /> New Project
+                <Plus size={14} /> {t('projects.newProject')}
               </button>
             )}
           </div>
@@ -188,7 +191,7 @@ export default function ProjectsPage() {
         {!loading && !error && filtered.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filtered.map(project => {
-              const status = STATUS_CONFIG[project.status] || STATUS_CONFIG.draft;
+              const dot = STATUS_DOT[project.status] ?? STATUS_DOT.draft;
               return (
                 <div
                   key={project.id}
@@ -210,13 +213,13 @@ export default function ProjectsPage() {
 
                   <h3 className="text-sm font-semibold text-text-primary mb-1 truncate">{project.name}</h3>
                   <p className="text-xs text-text-muted line-clamp-2 mb-4 leading-relaxed">
-                    {project.description || 'No description'}
+                    {project.description || t('common.noDescription')}
                   </p>
 
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
-                      <div className={`w-1.5 h-1.5 rounded-full ${status.dot}`} />
-                      <span className="text-xs text-text-muted">{status.label}</span>
+                      <div className={`w-1.5 h-1.5 rounded-full ${dot}`} />
+                      <span className="text-xs text-text-muted">{t(`common.status.${project.status}` as Parameters<typeof t>[0])}</span>
                     </div>
                     <div className="flex items-center gap-1 text-xs text-text-muted">
                       <Clock size={11} />

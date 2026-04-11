@@ -133,6 +133,22 @@ export interface UATPreventionAction {
   effort: 'low' | 'medium' | 'high';
 }
 
+export interface ClusterSummary {
+  clusterKey: string;
+  clusterName: string;
+  defectCount: number;
+  criticalCount: number;
+  highCount: number;
+  mediumCount: number;
+  lowCount: number;
+  riskScore: number;
+  riskLevel: 'high' | 'medium' | 'low';
+  topApplications: string[];
+  claudeSummary: string;
+  businessImpact: string;
+  recommendation: string;
+}
+
 export interface UATAnalysisResult {
   executiveSummary: string;
   overallRiskLevel: 'high' | 'medium' | 'low';
@@ -145,6 +161,7 @@ export interface UATAnalysisResult {
   riskAreas: UATRiskArea[];
   preventionActions: UATPreventionAction[];
   qualityTrend: string; // narrative about open vs closed, resolution patterns
+  clusterSummaries: ClusterSummary[]; // deterministic taxonomy-based clusters
 }
 
 export interface AnalysisResult {

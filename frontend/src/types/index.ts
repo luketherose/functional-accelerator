@@ -128,6 +128,70 @@ export interface UATApplicationStat {
   riskScore: number;
 }
 
+export interface ClusterSummary {
+  clusterKey: string;
+  clusterName: string;
+  defectCount: number;
+  criticalCount: number;
+  highCount: number;
+  mediumCount: number;
+  lowCount: number;
+  riskScore: number;
+  riskLevel: 'high' | 'medium' | 'low';
+  topApplications: string[];
+  claudeSummary: string;
+  businessImpact: string;
+  recommendation: string;
+}
+
+/** Risk override record attached to a defect */
+export interface RiskOverride {
+  override_id: string;
+  overridden_priority: 'Critical' | 'High' | 'Medium' | 'Low';
+  override_reason: string;
+  override_date: string;
+}
+
+/** Full override record returned by the project-level audit trail endpoint */
+export interface AuditOverride {
+  id: string;
+  defect_id: string;
+  original_priority: string;
+  overridden_priority: string;
+  reason: string;
+  created_at: string;
+  updated_at: string;
+  external_id: string;
+  title: string;
+  application: string;
+  module: string;
+}
+
+/** A defect row returned by the drill-down cluster endpoint */
+export interface DefectRow {
+  id: string;
+  external_id: string;
+  title: string;
+  priority: 'Critical' | 'High' | 'Medium' | 'Low' | 'Unknown';
+  status: string;
+  application: string;
+  module: string;
+  description: string;
+  resolution: string;
+  detected_by: string;
+  assigned_to: string;
+  detected_date: string;
+  closed_date: string;
+  environment: string;
+  classification_method: 'rule' | 'unclassified';
+  matched_keywords: string;
+  // override fields (null when no override)
+  override_id: string | null;
+  overridden_priority: 'Critical' | 'High' | 'Medium' | 'Low' | null;
+  override_reason: string | null;
+  override_date: string | null;
+}
+
 export interface UATAnalysisResult {
   executiveSummary: string;
   overallRiskLevel: 'high' | 'medium' | 'low';
@@ -140,6 +204,113 @@ export interface UATAnalysisResult {
   riskAreas: { area: string; riskLevel: 'high' | 'medium' | 'low'; rationale: string; recommendation: string; relatedApplications: string[] }[];
   preventionActions: { action: string; priority: 'high' | 'medium' | 'low'; targetApplication: string; effort: 'low' | 'medium' | 'high' }[];
   qualityTrend: string;
+  clusterSummaries: ClusterSummary[];
+}
+
+// ─── Cluster trend (cross-run time series) ───────────────────────────────────
+
+export interface ClusterTrendRun {
+  analysisId: string;
+  versionName: string;
+  date: string;
+  totalDefects: number;
+}
+
+export interface ClusterTrendPoint {
+  defectCount: number;
+  riskScore: number;
+  criticalCount: number;
+  highCount: number;
+  mediumCount: number;
+  lowCount: number;
+}
+
+export interface ClusterTrendSeries {
+  clusterKey: string;
+  clusterName: string;
+  points: ClusterTrendPoint[]; // one per run, aligned with ClusterTrendData.runs
+}
+
+export interface ClusterTrendData {
+  runs: ClusterTrendRun[];
+  clusters: ClusterTrendSeries[];
+}
+
+// ─── Taxonomy config (per-project) ───────────────────────────────────────────
+
+export interface ClusterConfig {
+  id: string | null;
+  cluster_key: string;
+  cluster_name: string;
+  keywords: string[];
+  sort_order: number;
+}
+
+// ─── Cluster suggestion (Phase 2D) ───────────────────────────────────────────
+
+export interface SuggestedCluster {
+  name: string;
+  rationale: string;
+  defectIds: string[];
+  suggestedKeywords: string[];
+}
+
+export interface SuggestClustersResult {
+  suggestions: SuggestedCluster[];
+  otherCount: number;
+  coveredCount: number;
+}
+
+// ─── Run comparison (Phase 3B) ───────────────────────────────────────────────
+
+export interface RunSnapshot {
+  id: string;
+  versionName: string;
+  date: string;
+  defectCount: number;
+  byPriority: Record<string, number>;
+  clusters: {
+    cluster_key: string;
+    cluster_name: string;
+    defect_count: number;
+    risk_score: number;
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+  }[];
+}
+
+export interface ClusterDelta {
+  clusterKey: string;
+  clusterName: string;
+  run1Count: number;
+  run2Count: number;
+  delta: number;
+  run1RiskScore: number;
+  run2RiskScore: number;
+  riskDelta: number;
+  run1Critical: number;
+  run1High: number;
+  run2Critical: number;
+  run2High: number;
+}
+
+export interface RunComparisonData {
+  run1: RunSnapshot;
+  run2: RunSnapshot;
+  delta: {
+    defectCount: number;
+    byPriority: Record<string, number>;
+    clusterDeltas: ClusterDelta[];
+  };
+}
+
+// ─── AI Defect Copilot (Phase 4) ─────────────────────────────────────────────
+
+export interface AIChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
 }
 
 export interface OpenQuestionFeedback {

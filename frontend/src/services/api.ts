@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult } from '../types';
+import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult, DefectRow, ClusterTrendData, ClusterConfig, AuditOverride, SuggestClustersResult, RunComparisonData, AIChatMessage } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -171,10 +171,11 @@ export const uatApi = {
   get: (projectId: string, analysisId: string) =>
     api.get<UATAnalysis>(`/api/uat/${projectId}/${analysisId}`).then(r => r.data),
 
-  run: (projectId: string, file: File) => {
+  run: (projectId: string, files: File | File[]) => {
     const form = new FormData();
-    form.append('file', file);
-    return api.post<{ analysisId: string; versionName: string; status: string; defectCount: number }>(
+    const list = Array.isArray(files) ? files : [files];
+    for (const f of list) form.append('files', f);
+    return api.post<{ analysisId: string; versionName: string; status: string; defectCount: number; fileCount: number; warnings?: string[] }>(
       `/api/uat/${projectId}/run`,
       form,
       { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 30_000 }
@@ -183,6 +184,75 @@ export const uatApi = {
 
   delete: (projectId: string, analysisId: string) =>
     api.delete(`/api/uat/${projectId}/${analysisId}`).then(r => r.data),
+
+  /** Aggregate cluster list for a completed analysis run */
+  listClusters: (projectId: string, analysisId: string) =>
+    api.get<{
+      cluster_key: string;
+      cluster_name: string;
+      defect_count: number;
+      critical_count: number;
+      high_count: number;
+      medium_count: number;
+      low_count: number;
+    }[]>(`/api/uat/${projectId}/${analysisId}/clusters`).then(r => r.data),
+
+  /** Defects belonging to a specific cluster in an analysis run */
+  listClusterDefects: (projectId: string, analysisId: string, clusterKey: string) =>
+    api.get<DefectRow[]>(
+      `/api/uat/${projectId}/${analysisId}/clusters/${encodeURIComponent(clusterKey)}/defects`
+    ).then(r => r.data),
+
+  /** All defects ever ingested for a project (across all runs) */
+  listAllDefects: (projectId: string, limit = 500, offset = 0) =>
+    api.get<{ defects: DefectRow[]; total: number; limit: number; offset: number }>(
+      `/api/uat/${projectId}/defects/all`,
+      { params: { limit, offset } }
+    ).then(r => r.data),
+
+  /** Per-cluster time series across all completed runs */
+  clusterTrend: (projectId: string) =>
+    api.get<ClusterTrendData>(`/api/uat/${projectId}/cluster-trend`).then(r => r.data),
+
+  /** Get project taxonomy (DB config or defaults) */
+  getTaxonomy: (projectId: string) =>
+    api.get<ClusterConfig[]>(`/api/uat/${projectId}/taxonomy`).then(r => r.data),
+
+  /** Save full taxonomy for a project */
+  saveTaxonomy: (projectId: string, clusters: { cluster_key: string; cluster_name: string; keywords: string[] }[]) =>
+    api.put<{ success: boolean; saved: number }>(`/api/uat/${projectId}/taxonomy`, clusters).then(r => r.data),
+
+  /** Re-classify all defects using the current (possibly updated) taxonomy */
+  recluster: (projectId: string) =>
+    api.post<{ message: string; runs: number }>(`/api/uat/${projectId}/recluster`).then(r => r.data),
+
+  /** Project-level audit trail: all risk overrides with defect context */
+  listOverrides: (projectId: string) =>
+    api.get<AuditOverride[]>(`/api/uat/${projectId}/overrides`).then(r => r.data),
+
+  /** Set or update a risk override for a specific defect */
+  setOverride: (projectId: string, defectId: string, overriddenPriority: string, reason: string) =>
+    api.post(`/api/uat/${projectId}/defects/${defectId}/override`, { overriddenPriority, reason }).then(r => r.data),
+
+  /** Remove the override for a specific defect (restores computed priority) */
+  deleteOverride: (projectId: string, defectId: string) =>
+    api.delete(`/api/uat/${projectId}/defects/${defectId}/override`).then(r => r.data),
+
+  /** Phase 2D — discover hidden themes in unclassified ("Other") defects */
+  suggestClusters: (projectId: string) =>
+    api.post<SuggestClustersResult>(`/api/uat/${projectId}/suggest-clusters`, {}, { timeout: 120_000 }).then(r => r.data),
+
+  /** Phase 3B — side-by-side comparison of two completed runs */
+  compareRuns: (projectId: string, run1Id: string, run2Id: string) =>
+    api.get<RunComparisonData>(`/api/uat/${projectId}/compare`, { params: { run1: run1Id, run2: run2Id } }).then(r => r.data),
+
+  /** Phase 4 — AI Defect Copilot conversational chat */
+  aiChat: (projectId: string, analysisId: string, message: string, history: AIChatMessage[]) =>
+    api.post<{ response: string }>(
+      `/api/uat/${projectId}/${analysisId}/ai-chat`,
+      { message, history },
+      { timeout: 120_000 }
+    ).then(r => r.data),
 };
 
 export function parseUATResult(analysis: UATAnalysis): UATAnalysisResult | null {

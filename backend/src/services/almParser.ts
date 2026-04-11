@@ -40,19 +40,19 @@ export interface ParseResult {
 // ─── Column name aliases (ALM varies a lot across installations) ──────────────
 
 const COL_ALIASES: Record<keyof Omit<Defect, 'rawRow'>, string[]> = {
-  id: ['Defect ID', 'ID', 'Bug ID', 'Issue ID', 'Req ID', 'Number', '#', 'BG_BUG_ID'],
+  id: ['Work Item ID', 'Defect ID', 'ID', 'Bug ID', 'Issue ID', 'Req ID', 'Number', '#', 'BG_BUG_ID', 'WorkItemID'],
   title: ['Summary', 'Title', 'Name', 'Subject', 'Defect Name', 'BG_SUMMARY', 'Description Short'],
   priority: ['Priority', 'BG_PRIORITY', 'Priorità', 'Importance'],
   severity: ['Severity', 'BG_SEVERITY', 'Severità'],
   status: ['Status', 'State', 'BG_STATUS', 'Stato'],
-  application: ['Application', 'Asset', 'System', 'Component', 'Applicativo', 'Subsystem', 'BG_USER_TEMPLATE_01', 'Applicazione', 'App'],
-  module: ['Module', 'Subject', 'Category', 'Area', 'Functional Area', 'BG_SUBJECT', 'Tema', 'Theme', 'Topic'],
+  application: ['Application', 'Asset', 'System', 'Component', 'Applicativo', 'Subsystem', 'BG_USER_TEMPLATE_01', 'Applicazione', 'App', 'Country'],
+  module: ['Module', 'Subject', 'Category', 'Area', 'Functional Area', 'BG_SUBJECT', 'Tema', 'Theme', 'Topic', 'Detected in Cycle', 'Cycle'],
   description: ['Description', 'Details', 'BG_DESCRIPTION', 'Descrizione', 'Steps to Reproduce', 'Steps'],
   resolution: ['Resolution', 'Fix Description', 'BG_DEV_COMMENTS', 'Risoluzione', 'Developer Comments', 'Closing Comments', 'Comments'],
-  detectedBy: ['Detected By', 'Found By', 'Reporter', 'Created By', 'BG_DETECTED_BY', 'Rilevato Da'],
-  assignedTo: ['Assigned To', 'Owner', 'BG_RESPONSIBLE', 'Assegnato A', 'Responsible'],
+  detectedBy: ['Detected By (full name)', 'Detected By', 'Found By', 'Reporter', 'Created By', 'BG_DETECTED_BY', 'Rilevato Da'],
+  assignedTo: ['Assigned To (full name)', 'Assigned To', 'Owner', 'BG_RESPONSIBLE', 'Assegnato A', 'Responsible'],
   detectedDate: ['Detected on Date', 'Creation Date', 'BG_DETECTION_DATE', 'Data Apertura', 'Open Date', 'Date Created'],
-  closedDate: ['Closed on Date', 'Closing Date', 'BG_CLOSING_DATE', 'Data Chiusura', 'Close Date', 'Fixed Date'],
+  closedDate: ['Closed on Date', 'Closing Date', 'BG_CLOSING_DATE', 'Data Chiusura', 'Close Date', 'Fixed Date', 'Detected in Release'],
   environment: ['Environment', 'Test Environment', 'BG_USER_TEMPLATE_02', 'Ambiente', 'Env'],
 };
 
@@ -60,10 +60,12 @@ const COL_ALIASES: Record<keyof Omit<Defect, 'rawRow'>, string[]> = {
 
 function normalizePriority(raw: string): Defect['priority'] {
   const v = raw?.toLowerCase().trim() ?? '';
-  if (/critica|critical|blocker|highest|urgente|urgent/.test(v)) return 'Critical';
-  if (/high|alta|alto|major/.test(v)) return 'High';
-  if (/medium|media|medio|normal|moderate/.test(v)) return 'Medium';
-  if (/low|bassa|basso|minor|lowest/.test(v)) return 'Low';
+  if (!v) return 'Unknown';
+  // Numeric prefixes common in ALM severity: "1-Critical", "2-High", etc.
+  if (/^1[^0-9]|critica|critical|blocker|highest|urgente|urgent/.test(v)) return 'Critical';
+  if (/^2[^0-9]|high|alta|alto|major/.test(v)) return 'High';
+  if (/^3[^0-9]|medium|media|medio|normal|moderate/.test(v)) return 'Medium';
+  if (/^4[^0-9]|low|bassa|basso|minor|lowest/.test(v)) return 'Low';
   return 'Unknown';
 }
 
@@ -123,11 +125,19 @@ export function parseALMExcel(buffer: Buffer): ParseResult {
     const title = getCell(row, colMap.title);
     if (!title) { skippedRows++; continue; } // skip empty rows
 
+    const severityRaw = getCell(row, colMap.severity);
+    const priorityRaw = getCell(row, colMap.priority);
+    // If no explicit Priority column, derive from Severity (common in ALM exports
+    // that only expose Severity, e.g. the standard "Work Item" export format)
+    const priority = normalizePriority(priorityRaw) !== 'Unknown'
+      ? normalizePriority(priorityRaw)
+      : normalizePriority(severityRaw);
+
     defects.push({
       id: getCell(row, colMap.id) || String(defects.length + 1),
       title,
-      priority: normalizePriority(getCell(row, colMap.priority)),
-      severity: getCell(row, colMap.severity),
+      priority,
+      severity: severityRaw,
       status: getCell(row, colMap.status),
       application: getCell(row, colMap.application) || 'Unknown',
       module: getCell(row, colMap.module),
