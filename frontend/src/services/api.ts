@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult, DefectRow, ClusterTrendData, ClusterConfig, AuditOverride, SuggestClustersResult, RunComparisonData } from '../types';
+import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult, DefectRow, ClusterTrendData, ClusterConfig, AuditOverride, SuggestClustersResult, RunComparisonData, AIChatMessage } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -171,10 +171,11 @@ export const uatApi = {
   get: (projectId: string, analysisId: string) =>
     api.get<UATAnalysis>(`/api/uat/${projectId}/${analysisId}`).then(r => r.data),
 
-  run: (projectId: string, file: File) => {
+  run: (projectId: string, files: File | File[]) => {
     const form = new FormData();
-    form.append('file', file);
-    return api.post<{ analysisId: string; versionName: string; status: string; defectCount: number }>(
+    const list = Array.isArray(files) ? files : [files];
+    for (const f of list) form.append('files', f);
+    return api.post<{ analysisId: string; versionName: string; status: string; defectCount: number; fileCount: number; warnings?: string[] }>(
       `/api/uat/${projectId}/run`,
       form,
       { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 30_000 }
@@ -244,6 +245,14 @@ export const uatApi = {
   /** Phase 3B — side-by-side comparison of two completed runs */
   compareRuns: (projectId: string, run1Id: string, run2Id: string) =>
     api.get<RunComparisonData>(`/api/uat/${projectId}/compare`, { params: { run1: run1Id, run2: run2Id } }).then(r => r.data),
+
+  /** Phase 4 — AI Defect Copilot conversational chat */
+  aiChat: (projectId: string, analysisId: string, message: string, history: AIChatMessage[]) =>
+    api.post<{ response: string }>(
+      `/api/uat/${projectId}/${analysisId}/ai-chat`,
+      { message, history },
+      { timeout: 120_000 }
+    ).then(r => r.data),
 };
 
 export function parseUATResult(analysis: UATAnalysis): UATAnalysisResult | null {

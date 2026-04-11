@@ -101,6 +101,7 @@ components/
   AuditTrail.tsx          project-level log of all risk overrides
   ClusterSuggestions.tsx  Claude-powered discovery of new cluster themes
   DiagnosticInsights.tsx  derived risk insights from trend data
+  AIDefectChat.tsx        AI Defect Copilot — conversational Claude interface per-run
 
 services/api.ts     all Axios calls (projectsApi, filesApi, analysisApi, uatApi)
 services/uatReport.ts  jsPDF + jsPDF-autotable PDF report generation
@@ -115,8 +116,8 @@ types/index.ts      mirrors backend types — keep in sync manually
 5. Result JSON stored in `analyses.result_json`; parsed and rendered by `AnalysisTabs`
 
 ### Data flow — Defect Intelligence
-1. User uploads ALM Excel/CSV → `POST /api/uat/:projectId/run` (multipart)
-2. `almParser.ts` normalises rows → `Defect[]`; defects persisted to `defects` table
+1. User uploads one or more ALM Excel/CSV files → `POST /api/uat/:projectId/run` (multipart, field name `files`, up to 20)
+2. Each file parsed by `almParser.ts`; defects merged and **deduplicated by `external_id`** (first-file-wins). One `ingestion_runs` record per file for provenance.
 3. `uatPipeline.ts` runs async:
    - Step 1: compute stats locally (no AI)
    - Step 2: classify defects via keyword taxonomy → `cluster_assignments`
@@ -137,7 +138,7 @@ Current correct order (see file):
 3. `GET /:projectId/:analysisId/...` sub-resource routes
 4. POST/DELETE routes (no conflict, different HTTP methods)
 
-**Always add new specific GET routes before line ~592 in `uat.ts`.**
+**Always add new specific GET routes before the `GET /:projectId/:analysisId` handler in `uat.ts`.** POST routes on `/:projectId/:analysisId/...` (like `ai-chat`) are safe anywhere — different HTTP method, no conflict.
 
 ---
 

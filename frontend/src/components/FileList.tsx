@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { FileText, Image, Trash2, ExternalLink, FileSpreadsheet } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { ProjectFile, FileBucket } from '../types';
 import { filesApi } from '../services/api';
 
@@ -9,10 +10,10 @@ interface FileListProps {
   onDeleted: () => void;
 }
 
-const BUCKET_CONFIG: Record<FileBucket, { label: string; badgeClass: string; emptyText: string }> = {
-  'as-is': { label: 'As-Is Documents', badgeClass: 'badge-asis', emptyText: 'No as-is documents uploaded yet.' },
-  'to-be': { label: 'To-Be Documents', badgeClass: 'badge-tobe', emptyText: 'No to-be documents uploaded yet.' },
-  'business-rules': { label: 'Business Rules', badgeClass: 'badge-br', emptyText: 'No business rules uploaded yet.' },
+const BUCKET_BADGE: Record<FileBucket, string> = {
+  'as-is': 'badge-asis',
+  'to-be': 'badge-tobe',
+  'business-rules': 'badge-br',
 };
 
 function formatBytes(bytes: number): string {
@@ -32,17 +33,20 @@ function getFileIcon(mimeType: string) {
 }
 
 function BucketSection({ bucket, files, projectId, onDeleted }: { bucket: FileBucket; files: ProjectFile[]; projectId: string; onDeleted: () => void }) {
+  const { t } = useTranslation();
   const [deleting, setDeleting] = useState<string | null>(null);
-  const config = BUCKET_CONFIG[bucket];
+
+  const labelKey = bucket === 'as-is' ? 'fileList.asIsTitle' : bucket === 'to-be' ? 'fileList.toBeTitle' : 'fileList.businessRulesTitle';
+  const emptyKey = bucket === 'as-is' ? 'fileList.asIsEmpty' : bucket === 'to-be' ? 'fileList.toBeEmpty' : 'fileList.businessRulesEmpty';
 
   const handleDelete = async (fileId: string) => {
-    if (!confirm('Delete this file?')) return;
+    if (!confirm(t('fileList.deleteConfirm'))) return;
     setDeleting(fileId);
     try {
       await filesApi.delete(projectId, fileId);
       onDeleted();
-    } catch (err) {
-      alert('Failed to delete file');
+    } catch {
+      alert(t('fileList.deleteFailed'));
     } finally {
       setDeleting(null);
     }
@@ -51,12 +55,12 @@ function BucketSection({ bucket, files, projectId, onDeleted }: { bucket: FileBu
   return (
     <div>
       <div className="flex items-center gap-2 mb-3">
-        <h3 className="text-sm font-semibold text-text-primary">{config.label}</h3>
-        <span className={`badge ${config.badgeClass}`}>{files.length}</span>
+        <h3 className="text-sm font-semibold text-text-primary">{t(labelKey as Parameters<typeof t>[0])}</h3>
+        <span className={`badge ${BUCKET_BADGE[bucket]}`}>{files.length}</span>
       </div>
 
       {files.length === 0 ? (
-        <p className="text-xs text-text-muted py-2">{config.emptyText}</p>
+        <p className="text-xs text-text-muted py-2">{t(emptyKey as Parameters<typeof t>[0])}</p>
       ) : (
         <div className="space-y-1.5">
           {files.map(file => (
@@ -72,7 +76,7 @@ function BucketSection({ bucket, files, projectId, onDeleted }: { bucket: FileBu
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-text-muted hover:text-purple-deep transition-colors opacity-0 group-hover:opacity-100"
-                  title="Preview"
+                  title={t('fileList.preview')}
                 >
                   <ExternalLink size={13} />
                 </a>
@@ -81,7 +85,7 @@ function BucketSection({ bucket, files, projectId, onDeleted }: { bucket: FileBu
                 onClick={() => handleDelete(file.id)}
                 disabled={deleting === file.id}
                 className="text-text-muted hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-50"
-                title="Delete"
+                title={t('fileList.deleteButton')}
               >
                 <Trash2 size={13} />
               </button>

@@ -306,6 +306,13 @@ export interface RunComparisonData {
   };
 }
 
+// ─── AI Defect Copilot (Phase 4) ─────────────────────────────────────────────
+
+export interface AIChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export interface OpenQuestionFeedback {
   id: string;
   analysis_id: string;

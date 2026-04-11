@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { Upload, Loader2, Download, AlertCircle, Image, X, RefreshCw } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { Impact } from '../types';
 import { analysisApi } from '../services/api';
 
@@ -11,6 +12,7 @@ interface ImpactPrototypeProps {
 }
 
 export default function ImpactPrototype({ impact, projectId, analysisId }: ImpactPrototypeProps) {
+  const { t } = useTranslation();
   const [imageData, setImageData] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [asIsPreview, setAsIsPreview] = useState<string | null>(null);
@@ -98,14 +100,14 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
   if (loading) {
     return (
       <div className="flex items-center gap-2 py-4 text-text-muted text-xs">
-        <Loader2 size={12} className="animate-spin" /> Loading…
+        <Loader2 size={12} className="animate-spin" /> {t('prototype.loading')}
       </div>
     );
   }
 
   return (
     <div className="mt-4 space-y-4 border-t border-surface-border pt-4">
-      <p className="text-xs font-semibold text-text-muted uppercase tracking-wide">Generate Modified Screen</p>
+      <p className="text-xs font-semibold text-text-muted uppercase tracking-wide">{t('prototype.title')}</p>
 
       {/* Upload zone — shown when no image yet or user wants to regenerate */}
       {!generating && !imageData && (
@@ -122,8 +124,8 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
               <input type="file" className="hidden" accept="image/*" onChange={handleFileInput} />
               <Upload size={16} className="text-text-muted" />
               <p className="text-xs text-text-secondary text-center">
-                Drop the <strong>current (as-is)</strong> screenshot here<br />
-                <span className="text-text-muted">PNG, JPG, WEBP — Claude will modify it to show the change</span>
+                {t('prototype.dropzone')}<br />
+                <span className="text-text-muted">{t('prototype.dropzoneFormats')}</span>
               </p>
             </label>
           ) : (
@@ -137,11 +139,10 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
           )}
 
           <div>
-            <label className="label text-[10px]">Additional instructions <span className="text-text-muted font-normal">(optional)</span></label>
             <textarea
               className="input text-xs resize-none"
               rows={3}
-              placeholder="e.g. Use a blue color scheme, add a confirmation modal, move the button to the top-right…"
+              placeholder={t('prototype.instructionsPlaceholder')}
               value={userPrompt}
               onChange={e => setUserPrompt(e.target.value)}
             />
@@ -152,7 +153,7 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
             disabled={!file}
             className="btn-primary w-full justify-center text-xs py-2"
           >
-            Generate Modified Screen
+            {t('prototype.generateButton')}
           </button>
         </div>
       )}
@@ -161,7 +162,7 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
       {generating && (
         <div className="flex items-center gap-3 py-6 text-text-muted text-sm justify-center">
           <Loader2 size={18} className="animate-spin text-purple-deep" />
-          <span>Generating modified screen… this may take up to a minute.</span>
+          <span>{t('prototype.generating')}</span>
         </div>
       )}
 
@@ -177,13 +178,13 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
           {asIsPreview ? (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-1.5">As-Is</p>
+                <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-1.5">{t('prototype.asIs')}</p>
                 <div className="rounded-xl overflow-hidden border border-surface-border shadow-card bg-white">
                   <img src={asIsPreview} alt="Original as-is screen" className="w-full" />
                 </div>
               </div>
               <div>
-                <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-1.5">Modified</p>
+                <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-1.5">{t('prototype.modified')}</p>
                 <div className="rounded-xl overflow-hidden border border-purple-deep/20 shadow-card bg-white">
                   <img
                     src={`data:image/png;base64,${imageData}`}
@@ -205,11 +206,11 @@ export default function ImpactPrototype({ impact, projectId, analysisId }: Impac
 
           <div className="flex gap-2">
             <button onClick={handleDownload} className="btn-secondary text-xs py-1.5 px-3">
-              <Download size={13} /> Download PNG
+              <Download size={13} /> {t('prototype.download')}
             </button>
             <label className="btn-secondary text-xs py-1.5 px-3 cursor-pointer inline-flex items-center gap-2">
               <input type="file" className="hidden" accept="image/*" onChange={handleRegenerate} />
-              <RefreshCw size={13} /> Re-generate
+              <RefreshCw size={13} /> {t('prototype.regenerate')}
             </label>
           </div>
         </div>

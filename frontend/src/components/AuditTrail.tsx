@@ -8,6 +8,7 @@
 
 import { useState, useEffect } from 'react';
 import { ShieldAlert, ArrowRight, Filter, Clock, Loader2, Inbox } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { uatApi } from '../services/api';
 import type { AuditOverride } from '../types';
 
@@ -31,7 +32,7 @@ function direction(row: AuditOverride): 'escalated' | 'de-escalated' | 'same' {
 }
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('it-IT', {
+  return new Date(iso).toLocaleDateString('en-GB', {
     day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
@@ -40,11 +41,12 @@ function formatDate(iso: string) {
 // ─── Single override row ──────────────────────────────────────────────────────
 
 function OverrideRow({ row }: { row: AuditOverride }) {
+  const { t } = useTranslation();
   const dir = direction(row);
   const dirLabel = dir === 'escalated'
-    ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-700 border border-red-200 uppercase">↑ escalated</span>
+    ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-700 border border-red-200 uppercase">{t('audit.badgeEscalated')}</span>
     : dir === 'de-escalated'
-      ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-green-100 text-green-700 border border-green-200 uppercase">↓ de-escalated</span>
+      ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-green-100 text-green-700 border border-green-200 uppercase">{t('audit.badgeDeEscalated')}</span>
       : null;
 
   return (
@@ -95,6 +97,7 @@ interface AuditTrailProps {
 type DirectionFilter = 'all' | 'escalated' | 'de-escalated';
 
 export default function AuditTrail({ projectId }: AuditTrailProps) {
+  const { t } = useTranslation();
   const [overrides, setOverrides] = useState<AuditOverride[]>([]);
   const [loading, setLoading] = useState(true);
   const [dirFilter, setDirFilter] = useState<DirectionFilter>('all');
@@ -127,16 +130,16 @@ export default function AuditTrail({ projectId }: AuditTrailProps) {
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-sm font-semibold text-text-primary flex items-center gap-2">
-              <ShieldAlert size={15} className="text-amber-500" /> Risk Override Audit Trail
+              <ShieldAlert size={15} className="text-amber-500" /> {t('audit.title')}
             </p>
             <p className="text-xs text-text-muted mt-0.5">
-              All analyst overrides to computed priorities — tracked immutably.
+              {t('audit.subtitle')}
             </p>
           </div>
           {!loading && overrides.length > 0 && (
             <div className="flex gap-3 text-xs text-text-muted shrink-0">
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" />{escalated} escalated</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400 inline-block" />{deEscalated} de-escalated</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" />{t('audit.escalated', { count: escalated })}</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400 inline-block" />{t('audit.deEscalated', { count: deEscalated })}</span>
             </div>
           )}
         </div>
@@ -158,7 +161,7 @@ export default function AuditTrail({ projectId }: AuditTrailProps) {
                   : 'border-surface-border text-text-muted hover:border-purple-deep/50'
               }`}
             >
-              {d === 'all' ? 'All directions' : d}
+              {d === 'all' ? t('audit.filterAll') : d === 'escalated' ? t('audit.filterEscalated') : t('audit.filterDeEscalated')}
             </button>
           ))}
 
@@ -169,7 +172,7 @@ export default function AuditTrail({ projectId }: AuditTrailProps) {
               onChange={e => setAppFilter(e.target.value)}
               className="ml-auto text-[10px] border border-surface-border rounded-lg px-2 py-1 bg-white text-text-secondary focus:outline-none focus:ring-1 focus:ring-purple-deep/40"
             >
-              <option value="all">All applications</option>
+              <option value="all">{t('audit.allApps')}</option>
               {apps.map(a => <option key={a} value={a}>{a}</option>)}
             </select>
           )}
@@ -180,22 +183,21 @@ export default function AuditTrail({ projectId }: AuditTrailProps) {
       <div className="flex-1 overflow-y-auto">
         {loading ? (
           <div className="flex items-center justify-center py-16 text-text-muted text-sm gap-2">
-            <Loader2 size={16} className="animate-spin" /> Loading audit trail…
+            <Loader2 size={16} className="animate-spin" /> {t('audit.loading')}
           </div>
         ) : overrides.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center px-6">
             <div className="w-12 h-12 rounded-xl bg-surface-muted flex items-center justify-center mb-3">
               <Inbox size={22} className="text-text-muted" />
             </div>
-            <p className="font-medium text-text-primary text-sm">No overrides yet</p>
+            <p className="font-medium text-text-primary text-sm">{t('audit.empty')}</p>
             <p className="text-xs text-text-muted mt-1 max-w-xs">
-              Overrides are created in the Defects tab when an analyst adjusts a computed priority.
-              They will appear here automatically.
+              {t('audit.emptyHint')}
             </p>
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex items-center justify-center py-16 text-text-muted text-sm">
-            No overrides match the current filter.
+            {t('audit.noMatch')}
           </div>
         ) : (
           <div>
@@ -207,7 +209,7 @@ export default function AuditTrail({ projectId }: AuditTrailProps) {
       {/* Footer count */}
       {!loading && filtered.length > 0 && (
         <div className="px-4 py-2 border-t border-surface-border shrink-0 text-[10px] text-text-muted">
-          Showing {filtered.length} of {overrides.length} override{overrides.length !== 1 ? 's' : ''}
+          {t('audit.showing', { shown: filtered.length, total: overrides.length })}
         </div>
       )}
     </div>

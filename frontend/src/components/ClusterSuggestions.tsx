@@ -10,6 +10,7 @@
 
 import { useState } from 'react';
 import { Sparkles, ChevronDown, ChevronUp, Plus, RefreshCw, CheckCircle2, AlertCircle, Loader2, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { uatApi } from '../services/api';
 import type { SuggestedCluster, SuggestClustersResult } from '../types';
 
@@ -42,6 +43,7 @@ interface SuggestionCardProps {
 }
 
 function SuggestionCard({ suggestion, index, projectId, onAdopted }: SuggestionCardProps) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(index === 0);
   const [keywords, setKeywords] = useState<string[]>(suggestion.suggestedKeywords);
   const [adopting, setAdopting] = useState(false);
@@ -53,7 +55,7 @@ function SuggestionCard({ suggestion, index, projectId, onAdopted }: SuggestionC
 
   const handleAdopt = async () => {
     if (keywords.length === 0) {
-      setError('Add at least one keyword before adopting.');
+      setError(t('suggestions.keywordsRequired'));
       return;
     }
     setAdopting(true);
@@ -97,7 +99,7 @@ function SuggestionCard({ suggestion, index, projectId, onAdopted }: SuggestionC
       setAdopted(true);
       setTimeout(onAdopted, 1500);
     } catch {
-      setError('Failed to adopt cluster. Try again.');
+      setError(t('suggestions.adoptFailed'));
     } finally {
       setAdopting(false);
     }
@@ -116,7 +118,7 @@ function SuggestionCard({ suggestion, index, projectId, onAdopted }: SuggestionC
           </span>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-text-primary truncate">{suggestion.name}</p>
-            <p className="text-[10px] text-text-muted">{suggestion.defectIds.length} defect{suggestion.defectIds.length !== 1 ? 's' : ''}</p>
+            <p className="text-[10px] text-text-muted">{t('suggestions.defects', { count: suggestion.defectIds.length })}</p>
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -134,7 +136,7 @@ function SuggestionCard({ suggestion, index, projectId, onAdopted }: SuggestionC
           {/* Defect IDs preview */}
           <div>
             <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-1">
-              Defects in this group
+              {t('suggestions.defectsInGroup')}
             </p>
             <div className="flex flex-wrap gap-1">
               {suggestion.defectIds.slice(0, 12).map(id => (
@@ -144,7 +146,7 @@ function SuggestionCard({ suggestion, index, projectId, onAdopted }: SuggestionC
               ))}
               {suggestion.defectIds.length > 12 && (
                 <span className="text-[10px] text-text-muted px-1">
-                  +{suggestion.defectIds.length - 12} more
+                  {t('suggestions.moreDefects', { count: suggestion.defectIds.length - 12 })}
                 </span>
               )}
             </div>
@@ -153,14 +155,14 @@ function SuggestionCard({ suggestion, index, projectId, onAdopted }: SuggestionC
           {/* Editable keywords */}
           <div>
             <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-1.5">
-              Keywords to add <span className="normal-case font-normal">(edit before adopting)</span>
+              {t('suggestions.keywordsLabel')}
             </p>
             <div className="flex flex-wrap gap-1.5">
               {keywords.map(kw => (
                 <KeywordChip key={kw} keyword={kw} onRemove={() => removeKeyword(kw)} />
               ))}
               {keywords.length === 0 && (
-                <span className="text-[11px] text-text-muted italic">No keywords — add at least one</span>
+                <span className="text-[11px] text-text-muted italic">{t('suggestions.noKeywords')}</span>
               )}
             </div>
           </div>
@@ -178,8 +180,8 @@ function SuggestionCard({ suggestion, index, projectId, onAdopted }: SuggestionC
             className="flex items-center gap-1.5 text-xs px-3.5 py-2 rounded-lg bg-violet-700 text-white font-medium disabled:opacity-40 hover:bg-violet-800 transition-colors w-full justify-center"
           >
             {adopting
-              ? <><Loader2 size={12} className="animate-spin" /> Adopting &amp; re-clustering…</>
-              : <><Plus size={12} /> Add to taxonomy &amp; re-cluster</>
+              ? <><Loader2 size={12} className="animate-spin" /> {t('suggestions.adopting')}</>
+              : <><Plus size={12} /> {t('suggestions.adopt')}</>
             }
           </button>
         </div>
@@ -187,7 +189,7 @@ function SuggestionCard({ suggestion, index, projectId, onAdopted }: SuggestionC
 
       {adopted && (
         <div className="px-3.5 pb-3.5 text-xs text-green-700 flex items-center gap-1.5">
-          <CheckCircle2 size={12} /> Cluster adopted — re-clustering in background.
+          <CheckCircle2 size={12} /> {t('suggestions.adoptOk')}
         </div>
       )}
     </div>
@@ -203,6 +205,7 @@ interface ClusterSuggestionsProps {
 }
 
 export default function ClusterSuggestions({ projectId, otherDefectCount, onAdopted }: ClusterSuggestionsProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<SuggestClustersResult | null>(null);
@@ -217,7 +220,7 @@ export default function ClusterSuggestions({ projectId, otherDefectCount, onAdop
       setResult(data);
       setOpen(true);
     } catch {
-      setError('Failed to analyse unclassified defects. Try again.');
+      setError(t('suggestions.adoptFailed'));
     } finally {
       setLoading(false);
     }
@@ -232,10 +235,10 @@ export default function ClusterSuggestions({ projectId, otherDefectCount, onAdop
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-xs font-semibold text-violet-900">
-            {otherDefectCount} unclassified defect{otherDefectCount !== 1 ? 's' : ''} in "Other"
+            {t('suggestions.unclassified', { count: otherDefectCount })}
           </p>
           <p className="text-[11px] text-violet-700 mt-0.5">
-            Claude can discover hidden patterns and suggest new taxonomy clusters.
+            {t('suggestions.hint')}
           </p>
         </div>
         <button
@@ -244,10 +247,10 @@ export default function ClusterSuggestions({ projectId, otherDefectCount, onAdop
           className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-violet-700 text-white font-medium hover:bg-violet-800 transition-colors shrink-0 disabled:opacity-50"
         >
           {loading
-            ? <><Loader2 size={11} className="animate-spin" /> Analysing…</>
+            ? <><Loader2 size={11} className="animate-spin" /> {t('suggestions.analysing')}</>
             : open
-              ? <><ChevronUp size={11} /> Hide</>
-              : <><Sparkles size={11} /> Discover clusters</>
+              ? <><ChevronUp size={11} /> {t('common.hide')}</>
+              : <><Sparkles size={11} /> {t('suggestions.discover')}</>
           }
         </button>
       </div>
@@ -263,21 +266,20 @@ export default function ClusterSuggestions({ projectId, otherDefectCount, onAdop
         <div className="border-t border-violet-200 p-3.5 space-y-3 bg-white/70">
           {result.suggestions.length === 0 ? (
             <p className="text-xs text-text-muted text-center py-4">
-              No clear themes found among the unclassified defects — they may be too heterogeneous to cluster meaningfully.
+              {t('suggestions.noThemes')}
             </p>
           ) : (
             <>
               <div className="flex items-center justify-between text-[10px] text-text-muted">
                 <span>
-                  {result.suggestions.length} theme{result.suggestions.length !== 1 ? 's' : ''} found
-                  · covers {result.coveredCount} of {result.otherCount} unclassified defects
+                  {t('suggestions.found', { count: result.suggestions.length, covered: result.coveredCount, total: result.otherCount })}
                 </span>
                 <button
                   onClick={handleDiscover}
                   className="flex items-center gap-1 hover:text-purple-deep transition-colors"
-                  title="Re-run analysis"
+                  title={t('suggestions.rerun')}
                 >
-                  <RefreshCw size={10} /> Refresh
+                  <RefreshCw size={10} /> {t('common.refresh')}
                 </button>
               </div>
 

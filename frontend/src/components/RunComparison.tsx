@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Minus, Loader2, GitCompare, AlertCircle } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { UATAnalysis, RunComparisonData, ClusterDelta } from '../types';
 import { uatApi } from '../services/api';
 
@@ -11,7 +12,7 @@ interface Props {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtDate(iso: string) {
-  return new Date(iso).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' });
+  return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 function DeltaBadge({ value, lowerIsBetter = true, suffix = '' }: { value: number; lowerIsBetter?: boolean; suffix?: string }) {
@@ -48,16 +49,17 @@ const PRIORITY_COLOR: Record<string, string> = {
 // ─── Cluster delta table ───────────────────────────────────────────────────────
 
 function ClusterDeltaTable({ deltas }: { deltas: ClusterDelta[] }) {
+  const { t } = useTranslation();
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b border-surface-border">
-            <th className="text-left py-2 pr-3 text-text-muted font-medium">Cluster</th>
-            <th className="text-right py-2 px-2 text-text-muted font-medium">Run 1</th>
-            <th className="text-right py-2 px-2 text-text-muted font-medium">Run 2</th>
-            <th className="text-right py-2 px-2 text-text-muted font-medium">Δ Defects</th>
-            <th className="text-right py-2 pl-2 text-text-muted font-medium">Δ Risk</th>
+            <th className="text-left py-2 pr-3 text-text-muted font-medium">{t('compare.colCluster')}</th>
+            <th className="text-right py-2 px-2 text-text-muted font-medium">{t('compare.colRun1')}</th>
+            <th className="text-right py-2 px-2 text-text-muted font-medium">{t('compare.colRun2')}</th>
+            <th className="text-right py-2 px-2 text-text-muted font-medium">{t('compare.colDeltaDefects')}</th>
+            <th className="text-right py-2 pl-2 text-text-muted font-medium">{t('compare.colDeltaRisk')}</th>
           </tr>
         </thead>
         <tbody>
@@ -131,6 +133,7 @@ function RunSelector({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function RunComparison({ analyses, projectId }: Props) {
+  const { t } = useTranslation();
   const done = analyses.filter(a => a.status === 'done');
 
   const [run1Id, setRun1Id] = useState<string>(done[done.length - 2]?.id ?? done[0]?.id ?? '');
@@ -158,8 +161,8 @@ export default function RunComparison({ analyses, projectId }: Props) {
           <GitCompare size={22} className="text-text-muted" />
         </div>
         <div className="text-center">
-          <p className="text-sm font-medium text-text-primary">Serve almeno 2 run completati</p>
-          <p className="text-xs text-text-muted mt-1 max-w-xs">Carica un altro export ALM per confrontare l'evoluzione del rischio nel tempo.</p>
+          <p className="text-sm font-medium text-text-primary">{t('compare.needTwoRuns')}</p>
+          <p className="text-xs text-text-muted mt-1 max-w-xs">{t('compare.needTwoRunsHint')}</p>
         </div>
       </div>
     );
@@ -174,23 +177,23 @@ export default function RunComparison({ analyses, projectId }: Props) {
     <div className="flex-1 overflow-y-auto bg-surface/30 p-6 space-y-6">
       {/* Run selectors */}
       <div className="card p-4">
-        <p className="text-xs font-semibold text-text-primary mb-3">Seleziona i due run da confrontare</p>
+        <p className="text-xs font-semibold text-text-primary mb-3">{t('compare.selectTitle')}</p>
         <div className="flex items-end gap-4">
-          <RunSelector label="Run base (A)" analyses={done} selectedId={run1Id} onChange={setRun1Id} />
+          <RunSelector label={t('compare.runBase')} analyses={done} selectedId={run1Id} onChange={setRun1Id} />
           <div className="pb-2 shrink-0 text-text-muted">
             <GitCompare size={16} />
           </div>
-          <RunSelector label="Run target (B)" analyses={done} selectedId={run2Id} onChange={setRun2Id} />
+          <RunSelector label={t('compare.runTarget')} analyses={done} selectedId={run2Id} onChange={setRun2Id} />
         </div>
         {run1Id === run2Id && (
-          <p className="text-[10px] text-amber-600 mt-2">Seleziona due run diversi.</p>
+          <p className="text-[10px] text-amber-600 mt-2">{t('compare.samRun')}</p>
         )}
       </div>
 
       {loading && (
         <div className="flex items-center justify-center gap-2 py-12 text-text-muted">
           <Loader2 size={18} className="animate-spin" />
-          <span className="text-sm">Confronto in corso…</span>
+          <span className="text-sm">{t('compare.loading')}</span>
         </div>
       )}
 
@@ -254,15 +257,17 @@ export default function RunComparison({ analyses, projectId }: Props) {
                 <div>
                   <p className={`text-sm font-semibold ${improved ? 'text-emerald-700' : stable ? 'text-text-primary' : 'text-red-700'}`}>
                     {improved
-                      ? `Miglioramento: ${Math.abs(data.delta.defectCount)} difetti in meno rispetto al run precedente`
+                      ? t('compare.improved', { count: Math.abs(data.delta.defectCount) })
                       : stable
-                      ? 'Nessuna variazione nel totale dei difetti'
-                      : `Regressione: ${data.delta.defectCount > 0 ? '+' : ''}${data.delta.defectCount} difetti rispetto al run precedente`}
+                      ? t('compare.stable')
+                      : t('compare.regressed', { delta: `${data.delta.defectCount > 0 ? '+' : ''}${data.delta.defectCount}` })}
                   </p>
                   {data.delta.byPriority['Critical'] !== 0 && (
                     <p className="text-xs text-text-secondary mt-0.5">
-                      Critici: {data.delta.byPriority['Critical'] > 0 ? '+' : ''}{data.delta.byPriority['Critical']} ·{' '}
-                      High: {data.delta.byPriority['High'] > 0 ? '+' : ''}{data.delta.byPriority['High'] ?? 0}
+                      {t('compare.criticalDelta', {
+                        critical: `${data.delta.byPriority['Critical'] > 0 ? '+' : ''}${data.delta.byPriority['Critical']}`,
+                        high: `${(data.delta.byPriority['High'] ?? 0) > 0 ? '+' : ''}${data.delta.byPriority['High'] ?? 0}`,
+                      })}
                     </p>
                   )}
                 </div>
@@ -272,8 +277,8 @@ export default function RunComparison({ analyses, projectId }: Props) {
 
           {/* Cluster delta table */}
           <div className="card p-5">
-            <p className="text-sm font-semibold text-text-primary mb-1">Variazioni per Cluster</p>
-            <p className="text-xs text-text-muted mb-4">Delta ordinati per impatto assoluto · C = Critical · Δ Risk = variazione risk score</p>
+            <p className="text-sm font-semibold text-text-primary mb-1">{t('compare.clusterTableTitle')}</p>
+            <p className="text-xs text-text-muted mb-4">{t('compare.clusterTableSub')}</p>
             <ClusterDeltaTable deltas={data.delta.clusterDeltas} />
           </div>
         </>

@@ -13,6 +13,7 @@ import {
   Layers, FileSearch, Tag, User, Calendar, CheckCircle2,
   ShieldAlert, Pencil, Trash2, Save, Loader2,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { uatApi } from '../services/api';
 import type { ClusterSummary, DefectRow, UATAnalysis } from '../types';
 import { parseUATResult } from '../services/api';
@@ -57,7 +58,7 @@ function riskLevel(score: number): 'high' | 'medium' | 'low' {
 }
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('it-IT', {
+  return new Date(iso).toLocaleDateString('en-GB', {
     day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
@@ -129,6 +130,7 @@ function ClusterCard({ cluster, onClick }: { cluster: ClusterSummary; onClick: (
 // ─── Defect table row ─────────────────────────────────────────────────────────
 
 function DefectTableRow({ defect, onClick }: { defect: DefectRow; onClick: () => void }) {
+  const { t } = useTranslation();
   const eff = effectivePriority(defect);
   const isOverridden = !!defect.override_id;
 
@@ -146,10 +148,10 @@ function DefectTableRow({ defect, onClick }: { defect: DefectRow; onClick: () =>
           </span>
           {isOverridden && (
             <span
-              title={`Overridden from ${defect.priority} — ${defect.override_reason}`}
+              title={t('clusters.overriddenFrom', { priority: defect.priority, reason: defect.override_reason })}
               className="text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200 leading-none"
             >
-              edited
+              {t('clusters.editedBadge')}
             </span>
           )}
         </div>
@@ -162,11 +164,11 @@ function DefectTableRow({ defect, onClick }: { defect: DefectRow; onClick: () =>
       <td className="py-2.5 px-3 text-xs text-text-muted">{defect.status || '—'}</td>
       <td className="py-2.5 px-3 text-xs text-text-muted">
         {defect.classification_method === 'rule' ? (
-          <span title={`Keywords: ${defect.matched_keywords}`} className="flex items-center gap-1 text-green-600">
-            <CheckCircle2 size={11} /> Rule
+          <span title={t('clusters.matchedKeywords', { keywords: defect.matched_keywords })} className="flex items-center gap-1 text-green-600">
+            <CheckCircle2 size={11} /> {t('clusters.methodRule')}
           </span>
         ) : (
-          <span className="text-slate-400">Other</span>
+          <span className="text-slate-400">{t('clusters.methodOther')}</span>
         )}
       </td>
       <td className="py-2.5 px-3">
@@ -185,6 +187,7 @@ interface OverrideSectionProps {
 }
 
 function OverrideSection({ defect, projectId, onChanged }: OverrideSectionProps) {
+  const { t } = useTranslation();
   const isOverridden = !!defect.override_id;
   const [editing, setEditing] = useState(false);
   const [newPriority, setNewPriority] = useState<string>(defect.overridden_priority ?? defect.priority);
@@ -236,14 +239,14 @@ function OverrideSection({ defect, projectId, onChanged }: OverrideSectionProps)
       {/* Header */}
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
-          <ShieldAlert size={12} /> Risk Override
+          <ShieldAlert size={12} /> {t('clusters.overrideTitle')}
         </p>
         {!editing && (
           <button
             onClick={() => { setEditing(true); setNewPriority(defect.overridden_priority ?? defect.priority); setReason(''); }}
             className="flex items-center gap-1 text-[10px] text-amber-700 hover:text-amber-900 font-medium"
           >
-            <Pencil size={10} /> {isOverridden ? 'Edit' : 'Override'}
+            <Pencil size={10} /> {isOverridden ? t('clusters.overrideEdit') : t('clusters.overrideButton')}
           </button>
         )}
       </div>
@@ -262,7 +265,7 @@ function OverrideSection({ defect, projectId, onChanged }: OverrideSectionProps)
           </div>
           <p className="text-[11px] text-amber-700 italic">"{defect.override_reason}"</p>
           <p className="text-[10px] text-text-muted">
-            Last updated: {defect.override_date ? formatDate(defect.override_date) : '—'}
+            {t('clusters.lastUpdated', { date: defect.override_date ? formatDate(defect.override_date) : '—' })}
           </p>
           <button
             onClick={handleRemove}
@@ -270,15 +273,14 @@ function OverrideSection({ defect, projectId, onChanged }: OverrideSectionProps)
             className="flex items-center gap-1 text-[10px] text-red-500 hover:text-red-700 font-medium disabled:opacity-50"
           >
             {removing ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
-            Remove override
+            {t('clusters.removeOverride')}
           </button>
         </div>
       )}
 
       {!isOverridden && !editing && (
         <p className="text-[11px] text-amber-700">
-          Computed priority: <strong>{defect.priority}</strong>.
-          Override if the ALM priority doesn't reflect the actual business risk.
+          {t('clusters.overrideDescription', { priority: defect.priority })}
         </p>
       )}
 
@@ -286,7 +288,7 @@ function OverrideSection({ defect, projectId, onChanged }: OverrideSectionProps)
       {editing && (
         <div className="space-y-2 pt-1">
           <div>
-            <label className="text-[10px] font-medium text-text-muted block mb-1">New priority</label>
+            <label className="text-[10px] font-medium text-text-muted block mb-1">{t('clusters.overrideNewPriority')}</label>
             <div className="flex gap-1.5 flex-wrap">
               {PRIORITIES.map(p => (
                 <button
@@ -306,12 +308,12 @@ function OverrideSection({ defect, projectId, onChanged }: OverrideSectionProps)
 
           <div>
             <label className="text-[10px] font-medium text-text-muted block mb-1">
-              Reason <span className="text-red-400">*</span>
+              {t('clusters.overrideReason')}
             </label>
             <textarea
               className="input text-xs resize-none w-full"
               rows={2}
-              placeholder="e.g. Business impact higher than ALM priority suggests — affects end-of-day settlement"
+              placeholder={t('clusters.overrideReasonPlaceholder')}
               value={reason}
               onChange={e => setReason(e.target.value)}
             />
@@ -326,13 +328,13 @@ function OverrideSection({ defect, projectId, onChanged }: OverrideSectionProps)
               className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-purple-deep text-white font-medium disabled:opacity-40 hover:bg-purple-900 transition-colors"
             >
               {saving ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
-              {saving ? 'Saving…' : 'Save override'}
+              {saving ? t('common.saving') : t('clusters.overrideSave')}
             </button>
             <button
               onClick={() => { setEditing(false); setError(''); }}
               className="text-xs px-3 py-1.5 rounded-lg border border-surface-border text-text-secondary hover:bg-surface-muted transition-colors"
             >
-              Cancel
+              {t('common.cancel')}
             </button>
           </div>
         </div>
@@ -351,6 +353,7 @@ interface DefectDrawerProps {
 }
 
 function DefectDrawer({ defect, projectId, onClose, onOverrideChange }: DefectDrawerProps) {
+  const { t } = useTranslation();
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
       <div className="absolute inset-0 bg-black/20" onClick={onClose} />
@@ -365,7 +368,7 @@ function DefectDrawer({ defect, projectId, onClose, onOverrideChange }: DefectDr
               </span>
               {defect.override_id && (
                 <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200">
-                  overridden
+                  {t('clusters.overridden')}
                 </span>
               )}
               <span className="text-xs text-text-muted font-mono">{defect.external_id}</span>
@@ -381,14 +384,14 @@ function DefectDrawer({ defect, projectId, onClose, onOverrideChange }: DefectDr
         <div className="flex-1 overflow-y-auto p-4 space-y-4 text-sm">
           {/* Meta grid */}
           <div className="grid grid-cols-2 gap-3">
-            <MetaField icon={<Tag size={12} />} label="Application" value={defect.application} />
-            <MetaField icon={<Layers size={12} />} label="Module" value={defect.module || '—'} />
-            <MetaField icon={<Info size={12} />} label="Status" value={defect.status || '—'} />
-            <MetaField icon={<AlertTriangle size={12} />} label="Environment" value={defect.environment || '—'} />
-            <MetaField icon={<User size={12} />} label="Detected by" value={defect.detected_by || '—'} />
-            <MetaField icon={<User size={12} />} label="Assigned to" value={defect.assigned_to || '—'} />
-            <MetaField icon={<Calendar size={12} />} label="Detected on" value={defect.detected_date || '—'} />
-            <MetaField icon={<Calendar size={12} />} label="Closed on" value={defect.closed_date || '—'} />
+            <MetaField icon={<Tag size={12} />} label={t('clusters.metaApplication')} value={defect.application} />
+            <MetaField icon={<Layers size={12} />} label={t('clusters.metaModule')} value={defect.module || '—'} />
+            <MetaField icon={<Info size={12} />} label={t('clusters.metaStatus')} value={defect.status || '—'} />
+            <MetaField icon={<AlertTriangle size={12} />} label={t('clusters.metaEnvironment')} value={defect.environment || '—'} />
+            <MetaField icon={<User size={12} />} label={t('clusters.metaDetectedBy')} value={defect.detected_by || '—'} />
+            <MetaField icon={<User size={12} />} label={t('clusters.metaAssignedTo')} value={defect.assigned_to || '—'} />
+            <MetaField icon={<Calendar size={12} />} label={t('clusters.metaDetectedOn')} value={defect.detected_date || '—'} />
+            <MetaField icon={<Calendar size={12} />} label={t('clusters.metaClosedOn')} value={defect.closed_date || '—'} />
           </div>
 
           {/* Risk override */}
@@ -402,10 +405,10 @@ function DefectDrawer({ defect, projectId, onClose, onOverrideChange }: DefectDr
           {defect.matched_keywords && (
             <div className="rounded-lg bg-green-50 border border-green-200 p-3">
               <p className="text-xs font-semibold text-green-800 mb-1 flex items-center gap-1">
-                <CheckCircle2 size={11} /> Why this cluster?
+                <CheckCircle2 size={11} /> {t('clusters.whyCluster')}
               </p>
               <p className="text-xs text-green-700">
-                Matched keywords: <span className="font-mono">{defect.matched_keywords}</span>
+                {t('clusters.matchedKeywords', { keywords: defect.matched_keywords })}
               </p>
             </div>
           )}
@@ -414,7 +417,7 @@ function DefectDrawer({ defect, projectId, onClose, onOverrideChange }: DefectDr
           {defect.description && (
             <div>
               <p className="text-xs font-semibold text-text-primary mb-1.5 flex items-center gap-1.5">
-                <FileSearch size={12} className="text-text-muted" /> Description
+                <FileSearch size={12} className="text-text-muted" /> {t('clusters.description')}
               </p>
               <p className="text-xs text-text-secondary whitespace-pre-wrap leading-relaxed bg-surface-muted/50 rounded-lg p-3 border border-surface-border">
                 {defect.description}
@@ -426,7 +429,7 @@ function DefectDrawer({ defect, projectId, onClose, onOverrideChange }: DefectDr
           {defect.resolution && (
             <div>
               <p className="text-xs font-semibold text-text-primary mb-1.5 flex items-center gap-1.5">
-                <CheckCircle2 size={12} className="text-text-muted" /> Resolution / Comments
+                <CheckCircle2 size={12} className="text-text-muted" /> {t('clusters.resolution')}
               </p>
               <p className="text-xs text-text-secondary whitespace-pre-wrap leading-relaxed bg-surface-muted/50 rounded-lg p-3 border border-surface-border">
                 {defect.resolution}
@@ -456,6 +459,7 @@ interface ClusterDrillDownProps {
 }
 
 export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDownProps) {
+  const { t } = useTranslation();
   const [selectedCluster, setSelectedCluster] = useState<ClusterSummary | null>(null);
   const [defects, setDefects] = useState<DefectRow[]>([]);
   const [loadingDefects, setLoadingDefects] = useState(false);
@@ -498,9 +502,9 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
         <div className="w-12 h-12 rounded-xl bg-surface-muted flex items-center justify-center mb-3">
           <Layers size={22} className="text-text-muted" />
         </div>
-        <p className="font-medium text-text-primary text-sm">No cluster data available</p>
+        <p className="font-medium text-text-primary text-sm">{t('clusters.noData')}</p>
         <p className="text-xs text-text-muted mt-1 max-w-xs">
-          Cluster analysis is generated when you run a new UAT analysis. Run one to see defect clusters.
+          {t('clusters.noDataHint')}
         </p>
       </div>
     );
@@ -527,7 +531,7 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
               onClick={() => setSelectedCluster(null)}
               className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-purple-deep transition-colors"
             >
-              <ChevronLeft size={14} /> All clusters
+              <ChevronLeft size={14} /> {t('clusters.allClusters')}
             </button>
             <span className="text-text-muted text-xs">/</span>
             <span className="text-xs font-medium text-text-primary">{selectedCluster.clusterName}</span>
@@ -559,7 +563,7 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
 
           {/* Priority filter chips */}
           <div className="flex items-center gap-2 px-4 py-2 border-b border-surface-border shrink-0 flex-wrap">
-            <span className="text-[10px] text-text-muted shrink-0">Filter:</span>
+            <span className="text-[10px] text-text-muted shrink-0">{t('clusters.filterLabel')}</span>
             {[null, 'Critical', 'High', 'Medium', 'Low'].map(p => {
               const count = p ? (priorityCounts[p] ?? 0) : defects.length;
               if (count === 0) return null;
@@ -573,13 +577,13 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
                       : 'border-surface-border text-text-muted hover:border-purple-deep/50'
                   }`}
                 >
-                  {p ?? 'All'} {count > 0 && `(${count})`}
+                  {p ?? t('common.all')} {count > 0 && `(${count})`}
                 </button>
               );
             })}
             {defects.some(d => d.override_id) && (
               <span className="ml-auto text-[10px] text-amber-600 flex items-center gap-1">
-                <ShieldAlert size={10} /> {defects.filter(d => d.override_id).length} overridden
+                <ShieldAlert size={10} /> {defects.filter(d => d.override_id).length} {t('clusters.overridden')}
               </span>
             )}
           </div>
@@ -588,23 +592,23 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
           <div className="flex-1 overflow-y-auto">
             {loadingDefects ? (
               <div className="flex items-center justify-center py-12 text-text-muted text-sm">
-                Loading defects…
+                {t('clusters.loadingDefects')}
               </div>
             ) : filteredDefects.length === 0 ? (
               <div className="flex items-center justify-center py-12 text-text-muted text-sm">
-                No defects match the current filter.
+                {t('clusters.noDefectsFilter')}
               </div>
             ) : (
               <table className="w-full text-left border-collapse">
                 <thead className="sticky top-0 bg-surface-muted/80 backdrop-blur-sm">
                   <tr className="border-b border-surface-border">
-                    <th className="py-2 px-3 text-[10px] font-semibold text-text-muted uppercase tracking-wide">ID</th>
-                    <th className="py-2 px-3 text-[10px] font-semibold text-text-muted uppercase tracking-wide">Priority</th>
-                    <th className="py-2 px-3 text-[10px] font-semibold text-text-muted uppercase tracking-wide">Title</th>
-                    <th className="py-2 px-3 text-[10px] font-semibold text-text-muted uppercase tracking-wide">App</th>
-                    <th className="py-2 px-3 text-[10px] font-semibold text-text-muted uppercase tracking-wide">Module</th>
-                    <th className="py-2 px-3 text-[10px] font-semibold text-text-muted uppercase tracking-wide">Status</th>
-                    <th className="py-2 px-3 text-[10px] font-semibold text-text-muted uppercase tracking-wide">Why</th>
+                    <th className="py-2 px-3 text-[10px] font-semibold text-text-muted uppercase tracking-wide">{t('clusters.colId')}</th>
+                    <th className="py-2 px-3 text-[10px] font-semibold text-text-muted uppercase tracking-wide">{t('clusters.colPriority')}</th>
+                    <th className="py-2 px-3 text-[10px] font-semibold text-text-muted uppercase tracking-wide">{t('clusters.colTitle')}</th>
+                    <th className="py-2 px-3 text-[10px] font-semibold text-text-muted uppercase tracking-wide">{t('clusters.colApp')}</th>
+                    <th className="py-2 px-3 text-[10px] font-semibold text-text-muted uppercase tracking-wide">{t('clusters.colModule')}</th>
+                    <th className="py-2 px-3 text-[10px] font-semibold text-text-muted uppercase tracking-wide">{t('clusters.colStatus')}</th>
+                    <th className="py-2 px-3 text-[10px] font-semibold text-text-muted uppercase tracking-wide">{t('clusters.colWhy')}</th>
                     <th className="py-2 px-3 w-6" />
                   </tr>
                 </thead>
@@ -642,7 +646,7 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
         <div className="flex items-center gap-4 p-3 rounded-lg bg-surface-muted/50 border border-surface-border text-xs text-text-secondary">
           <span className="flex items-center gap-1.5">
             <Layers size={12} className="text-purple-deep" />
-            <strong className="text-text-primary">{visibleClusters.length}</strong> clusters
+            <strong className="text-text-primary">{visibleClusters.length}</strong> {t('clusters.clusters')}
           </span>
           <span className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-red-500" />
@@ -652,7 +656,7 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
             <span className="w-2 h-2 rounded-full bg-orange-400" />
             {clusters.reduce((s, c) => s + c.highCount, 0)} High
           </span>
-          <span className="ml-auto text-text-muted">Click a cluster to drill down</span>
+          <span className="ml-auto text-text-muted">{t('clusters.clickToDrillDown')}</span>
         </div>
 
         {/* Named cluster grid */}

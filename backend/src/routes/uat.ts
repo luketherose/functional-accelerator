@@ -588,6 +588,136 @@ router.get('/:projectId/compare', (req: Request, res: Response) => {
   }
 });
 
+// ─── POST /api/uat/:projectId/:analysisId/ai-chat — AI Defect Copilot ────────
+router.post('/:projectId/:analysisId/ai-chat', async (req: Request, res: Response) => {
+  try {
+    const { projectId, analysisId } = req.params as { projectId: string; analysisId: string };
+    const { message, history = [] } = req.body as {
+      message: string;
+      history: Array<{ role: 'user' | 'assistant'; content: string }>;
+    };
+
+    if (!message?.trim()) return res.status(400).json({ error: 'message is required' });
+
+    const analysis = db.prepare(
+      'SELECT id, version_name, created_at, defect_count, result_json FROM uat_analyses WHERE id = ? AND project_id = ? AND status = ?'
+    ).get(analysisId, projectId, 'done') as {
+      id: string; version_name: string; created_at: string;
+      defect_count: number; result_json: string | null;
+    } | undefined;
+    if (!analysis) return res.status(404).json({ error: 'Analysis not found or not completed' });
+
+    const project = db.prepare('SELECT name FROM projects WHERE id = ?').get(projectId) as { name: string } | undefined;
+
+    // ── Build context from DB (clusters + priority breakdown) ─────────────────
+    type ClusterCtx = { cluster_name: string; defect_count: number; risk_score: number; critical: number; high: number; medium: number; low: number };
+    const clusters = db.prepare(`
+      SELECT
+        ca.cluster_name,
+        COUNT(*) AS defect_count,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Critical' THEN 4
+                 WHEN COALESCE(ro.overridden_priority, d.priority) = 'High'     THEN 2
+                 WHEN COALESCE(ro.overridden_priority, d.priority) = 'Medium'   THEN 1
+                 ELSE 0 END) AS risk_score,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Critical' THEN 1 ELSE 0 END) AS critical,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'High'     THEN 1 ELSE 0 END) AS high,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Medium'   THEN 1 ELSE 0 END) AS medium,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Low'      THEN 1 ELSE 0 END) AS low
+      FROM cluster_assignments ca
+      JOIN defects d ON d.id = ca.defect_id
+      LEFT JOIN risk_overrides ro ON ro.defect_id = d.id
+      WHERE ca.uat_analysis_id = ?
+      GROUP BY ca.cluster_key, ca.cluster_name
+      ORDER BY risk_score DESC
+    `).all(analysisId) as ClusterCtx[];
+
+    type AppCtx = { application: string; total: number; critical: number };
+    const apps = db.prepare(`
+      SELECT
+        d.application,
+        COUNT(*) AS total,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Critical' THEN 1 ELSE 0 END) AS critical
+      FROM cluster_assignments ca
+      JOIN defects d ON d.id = ca.defect_id
+      LEFT JOIN risk_overrides ro ON ro.defect_id = d.id
+      WHERE ca.uat_analysis_id = ?
+      GROUP BY d.application
+      ORDER BY total DESC
+      LIMIT 10
+    `).all(analysisId) as AppCtx[];
+
+    type TopDefect = { title: string; priority: string; application: string };
+    const topDefects = db.prepare(`
+      SELECT d.title, COALESCE(ro.overridden_priority, d.priority) AS priority, d.application
+      FROM cluster_assignments ca
+      JOIN defects d ON d.id = ca.defect_id
+      LEFT JOIN risk_overrides ro ON ro.defect_id = d.id
+      WHERE ca.uat_analysis_id = ?
+        AND COALESCE(ro.overridden_priority, d.priority) IN ('Critical', 'High')
+      ORDER BY CASE COALESCE(ro.overridden_priority, d.priority)
+               WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 ELSE 2 END
+      LIMIT 15
+    `).all(analysisId) as TopDefect[];
+
+    // ── Extract executive summary from result JSON ─────────────────────────────
+    let executiveSummary = '';
+    if (analysis.result_json) {
+      try {
+        const parsed = JSON.parse(analysis.result_json) as { executiveSummary?: string };
+        executiveSummary = parsed.executiveSummary ?? '';
+      } catch { /* ignore */ }
+    }
+
+    // ── Build system prompt ────────────────────────────────────────────────────
+    const clusterLines = clusters.map(c =>
+      `  - ${c.cluster_name}: ${c.defect_count} defects (Critical=${c.critical}, High=${c.high}, Medium=${c.medium}, Low=${c.low}, RiskScore=${c.risk_score})`
+    ).join('\n');
+
+    const appLines = apps.map(a =>
+      `  - ${a.application}: ${a.total} total, ${a.critical} critical`
+    ).join('\n');
+
+    const topDefectLines = topDefects.map(d =>
+      `  - [${d.priority}] ${d.title} (${d.application})`
+    ).join('\n');
+
+    const systemPrompt = `You are an expert UAT Defect Intelligence assistant for the project "${project?.name ?? projectId}".
+
+You are analysing run "${analysis.version_name}" (${new Date(analysis.created_at).toLocaleDateString('it-IT')}) with ${analysis.defect_count} total defects.
+
+## Defect Clusters (ordered by risk score)
+${clusterLines || '  (no clusters)'}
+
+## Applications (top by defect count)
+${appLines || '  (no application data)'}
+
+## Critical & High Priority Defects (top 15)
+${topDefectLines || '  (none)'}
+
+${executiveSummary ? `## Pipeline Executive Summary\n${executiveSummary}` : ''}
+
+## Your role
+- Answer analyst questions about this specific run's defect data.
+- Provide actionable, concise insights grounded in the data above.
+- When asked for sprint priorities or recommendations, reference the actual clusters and applications.
+- Keep responses focused and structured (use bullet points for lists).
+- Reply in the same language as the user's message (Italian if Italian, English if English).
+- Do NOT invent data — if something is not in the context above, say so.`;
+
+    const { callClaudeChat } = await import('../services/claude');
+    const response = await callClaudeChat(systemPrompt, [
+      ...history,
+      { role: 'user', content: message },
+    ]);
+
+    res.json({ response });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'AI chat failed';
+    console.error('[uat] ai-chat error:', msg);
+    res.status(500).json({ error: msg });
+  }
+});
+
 // ─── GET /api/uat/:projectId/:analysisId — get one (AFTER all specific routes) ─
 router.get('/:projectId/:analysisId', (req: Request, res: Response) => {
   try {
@@ -697,25 +827,70 @@ router.get('/:projectId/:analysisId/export/defects.xlsx', (req: Request, res: Re
 });
 
 // ─── POST /api/uat/:projectId/run — upload ALM file + trigger analysis ────────
-router.post('/:projectId/run', tmpUpload.single('file'), async (req: Request, res: Response) => {
+router.post('/:projectId/run', tmpUpload.array('files', 20), async (req: Request, res: Response) => {
   const projectId = req.params.projectId as string;
-  const tmpFilePath = req.file?.path;
+  const uploadedFiles = (req.files ?? []) as Express.Multer.File[];
 
   try {
     const project = db.prepare('SELECT name FROM projects WHERE id = ?').get(projectId) as { name: string } | undefined;
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    if (uploadedFiles.length === 0) return res.status(400).json({ error: 'No files uploaded' });
 
-    const fileBuffer = fs.readFileSync(req.file.path);
-    const parsed = parseALMExcel(fileBuffer);
+    // ── Parse every file and collect defects with provenance ─────────────────
+    type FileParseResult = { file: Express.Multer.File; defects: import('../services/almParser').Defect[]; detectedColumns: string[] };
+    const parseResults: FileParseResult[] = [];
+    const parseErrors: string[] = [];
 
-    if (parsed.defects.length === 0) {
+    for (const file of uploadedFiles) {
+      try {
+        const buf = fs.readFileSync(file.path);
+        const parsed = parseALMExcel(buf);
+        parseResults.push({ file, defects: parsed.defects, detectedColumns: parsed.detectedColumns });
+      } catch (e) {
+        parseErrors.push(`${file.originalname}: ${e instanceof Error ? e.message : 'parse error'}`);
+      }
+    }
+
+    if (parseResults.length === 0) {
+      return res.status(400).json({ error: `Could not parse any uploaded file. ${parseErrors.join('; ')}` });
+    }
+
+    // ── Merge defects; deduplicate by external_id (first file wins) ──────────
+    const seenIds = new Set<string>();
+    // Track which ingestion_run_id to use for each defect
+    type DefectWithRun = { defect: import('../services/almParser').Defect; ingestionRunId: string };
+    const mergedDefectsWithRun: DefectWithRun[] = [];
+
+    // First, create all ingestion_run records so we can assign defects to them
+    const ingestionRunIds: string[] = [];
+    for (const pr of parseResults) {
+      const runId = uuidv4();
+      ingestionRunIds.push(runId);
+      for (const d of pr.defects) {
+        if (!seenIds.has(d.id)) {
+          seenIds.add(d.id);
+          mergedDefectsWithRun.push({ defect: d, ingestionRunId: runId });
+        }
+      }
+    }
+
+    const totalDefects = mergedDefectsWithRun.length;
+
+    if (totalDefects === 0) {
       return res.status(400).json({
-        error: 'No defects found in the uploaded file. Please verify it is a valid ALM export.',
+        error: 'No defects found across all uploaded files. Please verify they are valid ALM exports.',
       });
     }
 
+    // ── Build summary labels ──────────────────────────────────────────────────
+    const fileNames = parseResults.map(pr => pr.file.originalname);
+    const fileNameSummary = fileNames.length === 1
+      ? fileNames[0]
+      : `${fileNames[0]} +${fileNames.length - 1} more`;
+    const allDetectedColumns = [...new Set(parseResults.flatMap(pr => pr.detectedColumns))];
+
+    // ── Create analysis record ────────────────────────────────────────────────
     const count = (db.prepare('SELECT COUNT(*) as c FROM uat_analyses WHERE project_id = ?').get(projectId) as { c: number }).c;
     const versionName = `UAT Analysis v${count + 1}`;
     const analysisId = uuidv4();
@@ -723,24 +898,28 @@ router.post('/:projectId/run', tmpUpload.single('file'), async (req: Request, re
     db.prepare(`
       INSERT INTO uat_analyses (id, project_id, version_name, status, file_name, defect_count)
       VALUES (?, ?, ?, 'running', ?, ?)
-    `).run(analysisId, projectId, versionName, req.file.originalname, parsed.defects.length);
+    `).run(analysisId, projectId, versionName, fileNameSummary, totalDefects);
 
-    // Persist ingestion run
-    const ingestionRunId = uuidv4();
-    db.prepare(`
+    // ── Persist ingestion_run + defects in one transaction ───────────────────
+    const insertRun = db.prepare(`
       INSERT INTO ingestion_runs (id, project_id, uat_analysis_id, file_name, defect_count)
       VALUES (?, ?, ?, ?, ?)
-    `).run(ingestionRunId, projectId, analysisId, req.file.originalname, parsed.defects.length);
-
-    // Persist normalized defects
+    `);
     const insertDefect = db.prepare(`
       INSERT INTO defects
         (id, external_id, project_id, ingestion_run_id, title, priority, status, application, module, description, resolution, detected_by, assigned_to, detected_date, closed_date, environment)
       VALUES
         (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const insertMany = db.transaction(() => {
-      for (const d of parsed.defects) {
+
+    db.transaction(() => {
+      for (let i = 0; i < parseResults.length; i++) {
+        const pr = parseResults[i];
+        const runId = ingestionRunIds[i];
+        const defectsForRun = mergedDefectsWithRun.filter(x => x.ingestionRunId === runId);
+        insertRun.run(runId, projectId, analysisId, pr.file.originalname, defectsForRun.length);
+      }
+      for (const { defect: d, ingestionRunId } of mergedDefectsWithRun) {
         insertDefect.run(
           uuidv4(), d.id, projectId, ingestionRunId,
           d.title, d.priority, d.status,
@@ -751,8 +930,7 @@ router.post('/:projectId/run', tmpUpload.single('file'), async (req: Request, re
           d.detectedDate, d.closedDate, d.environment
         );
       }
-    });
-    insertMany();
+    })();
 
     // Load previous run for delta context
     const prevAnalysis = db.prepare(
@@ -763,19 +941,24 @@ router.post('/:projectId/run', tmpUpload.single('file'), async (req: Request, re
       analysisId,
       versionName,
       status: 'running',
-      defectCount: parsed.defects.length,
-      detectedColumns: parsed.detectedColumns,
+      defectCount: totalDefects,
+      fileCount: parseResults.length,
+      detectedColumns: allDetectedColumns,
+      ...(parseErrors.length > 0 && { warnings: parseErrors }),
     });
 
-    runUATAsync(analysisId, projectId, project.name, parsed.defects, req.file.originalname, ingestionRunId, prevAnalysis?.result_json ?? null)
+    // Use first ingestion run id for the async runner (cosmetic, run label only)
+    runUATAsync(analysisId, projectId, project.name, mergedDefectsWithRun.map(x => x.defect), fileNameSummary, ingestionRunIds[0], prevAnalysis?.result_json ?? null)
       .catch(err => console.error('[uat] Async error:', err));
 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Failed to start UAT analysis';
     res.status(500).json({ error: msg });
   } finally {
-    if (tmpFilePath && fs.existsSync(tmpFilePath)) {
-      try { fs.unlinkSync(tmpFilePath); } catch (_) {}
+    for (const file of uploadedFiles) {
+      if (file.path && fs.existsSync(file.path)) {
+        try { fs.unlinkSync(file.path); } catch (_) {}
+      }
     }
   }
 });

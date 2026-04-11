@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
 import { TrendingDown, TrendingUp, Minus, AlertTriangle, CheckCircle2, AlertCircle } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { UATAnalysis, UATAnalysisResult, ClusterTrendData } from '../types';
 import { parseUATResult, uatApi } from '../services/api';
 import DiagnosticInsights from './DiagnosticInsights';
@@ -131,6 +132,7 @@ function StackedBarChart({ runs }: { runs: RunPoint[] }) {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function UATTrend({ analyses, projectId }: Props) {
+  const { t } = useTranslation();
   const [clusterTrend, setClusterTrend] = useState<ClusterTrendData | null>(null);
 
   useEffect(() => {
@@ -173,8 +175,8 @@ export default function UATTrend({ analyses, projectId }: Props) {
           <TrendingDown size={22} />
         </div>
         <div className="text-center">
-          <p className="text-sm font-medium text-text-primary">Nessun dato di trend</p>
-          <p className="text-xs text-text-muted mt-1">Servono almeno 2 analisi completate per visualizzare i trend.</p>
+          <p className="text-sm font-medium text-text-primary">{t('trend.noData')}</p>
+          <p className="text-xs text-text-muted mt-1">{t('trend.noDataHint')}</p>
         </div>
       </div>
     );
@@ -187,8 +189,8 @@ export default function UATTrend({ analyses, projectId }: Props) {
           <TrendingDown size={22} />
         </div>
         <div className="text-center">
-          <p className="text-sm font-medium text-text-primary">Solo 1 analisi completata</p>
-          <p className="text-xs text-text-muted mt-1">Esegui un'altra analisi UAT per confrontare i trend nel tempo.</p>
+          <p className="text-sm font-medium text-text-primary">{t('trend.oneRun')}</p>
+          <p className="text-xs text-text-muted mt-1">{t('trend.oneRunHint')}</p>
         </div>
       </div>
     );
@@ -229,14 +231,21 @@ export default function UATTrend({ analyses, projectId }: Props) {
           <div className="flex-1">
             <p className="text-sm font-semibold text-text-primary">
               {trendPositive
-                ? 'Trend in miglioramento'
+                ? t('trend.improving')
                 : trendNegative
-                ? 'Trend in peggioramento'
-                : 'Trend stabile'}
+                ? t('trend.worsening')
+                : t('trend.stable')}
             </p>
             <p className="text-xs text-text-muted mt-0.5">
-              Da {first.label} a {last.label} — {Math.abs(defectDelta)} defect {defectDelta <= 0 ? 'in meno' : 'in più'},
-              {' '}risk score {riskDelta < 0 ? 'diminuito di' : riskDelta > 0 ? 'aumentato di' : 'invariato'} {Math.abs(riskDelta)} punti.
+              {t('trend.summary', {
+                first: first.label,
+                last: last.label,
+                abs: Math.abs(defectDelta),
+                plural: Math.abs(defectDelta) !== 1 ? 's' : '',
+                direction: defectDelta <= 0 ? t('trend.summaryFewer') : t('trend.summaryMore'),
+                riskDir: riskDelta < 0 ? t('trend.summaryDecreased') : riskDelta > 0 ? t('trend.summaryIncreased') : t('trend.summaryUnchanged'),
+                riskAbs: Math.abs(riskDelta),
+              })}
             </p>
           </div>
           <span className={`text-[10px] px-2 py-1 rounded-full border font-semibold ${
@@ -244,7 +253,7 @@ export default function UATTrend({ analyses, projectId }: Props) {
             : trendNegative ? 'text-red-600 bg-red-50 border-red-200'
             : 'text-text-muted bg-surface border-surface-border'
           }`}>
-            {runs.length} runs
+            {t('trend.runs', { count: runs.length })}
           </span>
         </div>
       </div>
@@ -253,8 +262,8 @@ export default function UATTrend({ analyses, projectId }: Props) {
 
         {/* ── Total defects line chart ─────────────────────────────── */}
         <div className="card p-5">
-          <h3 className="text-sm font-semibold text-text-primary mb-1">Evoluzione Defect Totali</h3>
-          <p className="text-xs text-text-muted mb-4">Andamento del numero di difetti per run</p>
+          <h3 className="text-sm font-semibold text-text-primary mb-1">{t('trend.totalDefectsChart')}</h3>
+          <p className="text-xs text-text-muted mb-4">{t('trend.totalDefectsChartSub')}</p>
           <LineChart points={runs.map(r => r.totalDefects)} />
           <div className="mt-3 flex justify-between text-[10px] text-text-muted">
             {runs.map(r => (
@@ -269,7 +278,7 @@ export default function UATTrend({ analyses, projectId }: Props) {
 
         {/* ── Risk score line chart ────────────────────────────────── */}
         <div className="card p-5">
-          <h3 className="text-sm font-semibold text-text-primary mb-1">Evoluzione Risk Score</h3>
+          <h3 className="text-sm font-semibold text-text-primary mb-1">{t('trend.riskScoreChart')}</h3>
           <p className="text-xs text-text-muted mb-4">Critical×4 + High×2 + Medium×1</p>
           <LineChart points={runs.map(r => r.overallRiskScore)} color="#dc2626" />
           <div className="mt-3 flex justify-between text-[10px] text-text-muted">
@@ -286,8 +295,8 @@ export default function UATTrend({ analyses, projectId }: Props) {
 
       {/* ── Priority stacked bar chart ───────────────────────────────── */}
       <div className="card p-5">
-        <h3 className="text-sm font-semibold text-text-primary mb-1">Distribuzione Priorità per Run</h3>
-        <p className="text-xs text-text-muted mb-4">Composizione Critical / High / Medium / Low nel tempo</p>
+        <h3 className="text-sm font-semibold text-text-primary mb-1">{t('trend.priorityDistChart')}</h3>
+        <p className="text-xs text-text-muted mb-4">{t('trend.priorityDistChartSub')}</p>
         <div className="flex gap-3 mb-4 flex-wrap">
           {[['#ef4444','Critical'],['#fb923c','High'],['#fbbf24','Medium'],['#4ade80','Low']].map(([fill,lbl]) => (
             <span key={lbl} className="flex items-center gap-1 text-[10px] text-text-muted">
@@ -300,20 +309,20 @@ export default function UATTrend({ analyses, projectId }: Props) {
 
       {/* ── Run-by-run comparison table ──────────────────────────────── */}
       <div className="card p-5">
-        <h3 className="text-sm font-semibold text-text-primary mb-4">Confronto Run per Run</h3>
+        <h3 className="text-sm font-semibold text-text-primary mb-4">{t('trend.runTable')}</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-surface-border">
-                <th className="text-left py-2 pr-4 font-semibold text-text-primary">Run</th>
-                <th className="text-right py-2 px-3 font-semibold text-text-primary">Data</th>
-                <th className="text-right py-2 px-3 font-semibold text-text-primary">Defect</th>
+                <th className="text-left py-2 pr-4 font-semibold text-text-primary">{t('trend.colRun')}</th>
+                <th className="text-right py-2 px-3 font-semibold text-text-primary">{t('trend.colDate')}</th>
+                <th className="text-right py-2 px-3 font-semibold text-text-primary">{t('trend.colDefects')}</th>
                 <th className="text-right py-2 px-3 font-semibold text-red-600">Critical</th>
                 <th className="text-right py-2 px-3 font-semibold text-orange-500">High</th>
                 <th className="text-right py-2 px-3 font-semibold text-amber-500">Medium</th>
                 <th className="text-right py-2 px-3 font-semibold text-green-600">Low</th>
-                <th className="text-right py-2 px-3 font-semibold text-text-primary">Risk Score</th>
-                <th className="text-center py-2 px-3 font-semibold text-text-primary">Livello</th>
+                <th className="text-right py-2 px-3 font-semibold text-text-primary">{t('trend.colRiskScore')}</th>
+                <th className="text-center py-2 px-3 font-semibold text-text-primary">{t('trend.colLevel')}</th>
               </tr>
             </thead>
             <tbody>
@@ -324,7 +333,7 @@ export default function UATTrend({ analyses, projectId }: Props) {
                   <tr key={r.label} className={`border-b border-surface-border/50 ${isFirst ? '' : 'hover:bg-surface/40'}`}>
                     <td className="py-2.5 pr-4 font-medium text-text-primary">{r.label}</td>
                     <td className="py-2.5 px-3 text-right text-text-muted">
-                      {new Date(r.date).toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })}
+                      {new Date(r.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
                     </td>
                     {/* Total defects */}
                     <td className="py-2.5 px-3 text-right">
@@ -389,19 +398,19 @@ export default function UATTrend({ analyses, projectId }: Props) {
       {/* ── Cluster evolution table ──────────────────────────────────── */}
       {clusterTrend && clusterTrend.clusters.length > 0 && clusterTrend.runs.length >= 1 && (
         <div className="card p-5">
-          <h3 className="text-sm font-semibold text-text-primary mb-1">Evoluzione per Cluster</h3>
-          <p className="text-xs text-text-muted mb-4">Numero di difetti per categoria tassonomica nel tempo</p>
+          <h3 className="text-sm font-semibold text-text-primary mb-1">{t('trend.clusterChart')}</h3>
+          <p className="text-xs text-text-muted mb-4">{t('trend.clusterChartSub')}</p>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-surface-border">
-                  <th className="text-left py-2 pr-4 font-semibold text-text-primary min-w-[140px]">Cluster</th>
+                  <th className="text-left py-2 pr-4 font-semibold text-text-primary min-w-[140px]">{t('trend.colCluster')}</th>
                   {clusterTrend.runs.map(r => (
                     <th key={r.analysisId} className="text-right py-2 px-3 font-semibold text-text-muted min-w-[60px]">
                       {r.versionName.replace('UAT Analysis ', 'v')}
                     </th>
                   ))}
-                  <th className="text-right py-2 px-3 font-semibold text-text-primary">Δ totale</th>
+                  <th className="text-right py-2 px-3 font-semibold text-text-primary">{t('trend.colDelta')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -457,8 +466,8 @@ export default function UATTrend({ analyses, projectId }: Props) {
       {/* ── Per-application evolution ────────────────────────────────── */}
       {allApps.length > 0 && (
         <div className="card p-5">
-          <h3 className="text-sm font-semibold text-text-primary mb-1">Evoluzione per Applicazione</h3>
-          <p className="text-xs text-text-muted mb-4">Numero di difetti per app nel tempo</p>
+          <h3 className="text-sm font-semibold text-text-primary mb-1">{t('trend.appChart')}</h3>
+          <p className="text-xs text-text-muted mb-4">{t('trend.appChartSub')}</p>
           <div className="space-y-4">
             {allApps.map(app => {
               const appPoints = runs.map(r => r.result.byApplication.find(a => a.application === app)?.total ?? 0);
@@ -472,7 +481,7 @@ export default function UATTrend({ analyses, projectId }: Props) {
                     <div className="flex items-center gap-1">
                       {deltaIcon(firstVal, lastVal)}
                       <span className={`text-[10px] ${deltaClass(firstVal, lastVal)}`}>
-                        {delta === 0 ? 'stabile' : `${delta > 0 ? '+' : ''}${delta} defect`}
+                        {delta === 0 ? t('trend.stableLabel') : `${delta > 0 ? '+' : ''}${delta} defect`}
                       </span>
                     </div>
                   </div>

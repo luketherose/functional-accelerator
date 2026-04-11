@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Zap, Plus, Folder, Loader2, X, Check } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { Project } from '../../types';
 import { projectsApi } from '../../services/api';
+import LanguageSwitcher from './LanguageSwitcher';
 
 const STATUS_DOT: Record<string, string> = {
   draft:     'bg-slate-400',
@@ -16,6 +18,7 @@ function NewProjectModal({ onClose, onCreate }: {
   onClose: () => void;
   onCreate: (name: string, description: string) => Promise<void>;
 }) {
+  const { t } = useTranslation();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
@@ -23,14 +26,14 @@ function NewProjectModal({ onClose, onCreate }: {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim()) { setError('Il nome è obbligatorio'); return; }
+    if (!name.trim()) { setError(t('projects.nameRequired')); return; }
     setLoading(true);
     setError('');
     try {
       await onCreate(name.trim(), description.trim());
       onClose();
     } catch {
-      setError('Creazione fallita');
+      setError(t('projects.nameRequired'));
     } finally {
       setLoading(false);
     }
@@ -46,38 +49,38 @@ function NewProjectModal({ onClose, onCreate }: {
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-base font-semibold text-text-primary">Nuovo Progetto</h2>
+          <h2 className="text-base font-semibold text-text-primary">{t('projects.newProject')}</h2>
           <button onClick={onClose} className="text-text-muted hover:text-text-primary transition-colors">
             <X size={16} />
           </button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="label">Nome *</label>
+            <label className="label">{t('projects.nameLabel')}</label>
             <input
               className="input"
-              placeholder="es. Customer Portal Revamp"
+              placeholder={t('projects.namePlaceholder')}
               value={name}
               onChange={e => setName(e.target.value)}
               autoFocus
             />
           </div>
           <div>
-            <label className="label">Descrizione</label>
+            <label className="label">{t('projects.descriptionLabel')}</label>
             <textarea
               className="input resize-none"
               rows={3}
-              placeholder="Breve descrizione dell'ambito dell'analisi…"
+              placeholder={t('projects.descriptionPlaceholder')}
               value={description}
               onChange={e => setDescription(e.target.value)}
             />
           </div>
           {error && <p className="text-xs text-red-500">{error}</p>}
           <div className="flex gap-2 justify-end pt-1">
-            <button type="button" className="btn-secondary" onClick={onClose}>Annulla</button>
+            <button type="button" className="btn-secondary" onClick={onClose}>{t('common.cancel')}</button>
             <button type="submit" className="btn-primary" disabled={loading}>
               {loading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-              Crea Progetto
+              {loading ? t('projects.creating') : t('projects.create')}
             </button>
           </div>
         </form>
@@ -87,13 +90,13 @@ function NewProjectModal({ onClose, onCreate }: {
 }
 
 export default function Sidebar() {
+  const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
 
-  // Parse current project id from URL
   const activeProjectId = location.pathname.match(/^\/projects\/([^/]+)/)?.[1] ?? null;
 
   useEffect(() => {
@@ -103,7 +106,7 @@ export default function Sidebar() {
       )))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [location.pathname]); // re-fetch when navigating (new project created etc.)
+  }, [location.pathname]);
 
   async function handleCreate(name: string, description: string) {
     const project = await projectsApi.create(name, description);
@@ -126,10 +129,10 @@ export default function Sidebar() {
 
         {/* Projects header */}
         <div className="flex items-center justify-between px-4 pt-4 pb-2 shrink-0">
-          <p className="text-white/40 text-[10px] font-semibold uppercase tracking-widest">Progetti</p>
+          <p className="text-white/40 text-[10px] font-semibold uppercase tracking-widest">{t('projects.title')}</p>
           <button
             onClick={() => setShowModal(true)}
-            title="Nuovo progetto"
+            title={t('projects.newProject')}
             className="w-5 h-5 rounded flex items-center justify-center text-white/50 hover:text-white hover:bg-white/10 transition-all"
           >
             <Plus size={13} />
@@ -146,12 +149,12 @@ export default function Sidebar() {
 
           {!loading && projects.length === 0 && (
             <p className="text-white/30 text-xs px-2 py-3 text-center leading-relaxed">
-              Nessun progetto ancora.{' '}
+              {t('projects.empty')}{' '}
               <button
                 onClick={() => setShowModal(true)}
                 className="underline hover:text-white/60 transition-colors"
               >
-                Crea il primo
+                {t('projects.create')}
               </button>
             </p>
           )}
@@ -177,9 +180,10 @@ export default function Sidebar() {
           })}
         </nav>
 
-        {/* Footer */}
-        <div className="px-4 py-3 border-t border-white/10 shrink-0">
+        {/* Footer with language switcher */}
+        <div className="px-4 py-3 border-t border-white/10 shrink-0 flex items-center justify-between">
           <p className="text-white/25 text-[10px]">MVP v1.0</p>
+          <LanguageSwitcher />
         </div>
       </aside>
 

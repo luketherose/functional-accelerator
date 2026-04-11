@@ -10,6 +10,7 @@
 
 import type { ClusterTrendData, ClusterTrendSeries } from '../types';
 import { TrendingUp, TrendingDown, AlertTriangle, Zap, Target, Minus } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -104,6 +105,7 @@ interface DiagnosticInsightsProps {
 }
 
 export default function DiagnosticInsights({ data }: DiagnosticInsightsProps) {
+  const { t } = useTranslation();
   const { runs, clusters } = data;
 
   // Need at least 2 runs for delta-based insights
@@ -147,10 +149,10 @@ export default function DiagnosticInsights({ data }: DiagnosticInsightsProps) {
   if (hasDelta && worstDelta > 0) {
     cards.push({
       icon: <TrendingUp size={11} />,
-      question: 'Which area is getting worse?',
+      question: t('diagnostic.gettingWorse'),
       clusterName: worst.clusterName,
-      answer: `+${worstDelta} defect${worstDelta !== 1 ? 's' : ''} vs previous run`,
-      detail: `Now at ${latestCount(worst)} total — highest growth this sprint`,
+      answer: t('diagnostic.gettingWorseValue', { count: worstDelta, delta: worstDelta }),
+      detail: t('diagnostic.gettingWorseHint', { count: latestCount(worst) }),
       sparkPoints: worst.points.map(p => p.defectCount),
       sparkColor: '#ef4444',
       accentClass: 'border-red-200 bg-red-50/60',
@@ -158,9 +160,9 @@ export default function DiagnosticInsights({ data }: DiagnosticInsightsProps) {
   } else if (hasDelta && worstDelta === 0) {
     cards.push({
       icon: <Minus size={11} />,
-      question: 'Which area is getting worse?',
-      clusterName: 'No regression detected',
-      answer: 'All clusters are stable or improving since last run',
+      question: t('diagnostic.gettingWorse'),
+      clusterName: t('diagnostic.noRegression'),
+      answer: t('diagnostic.noRegressionHint'),
       sparkPoints: active[0].points.map(p => p.defectCount),
       sparkColor: '#6b7280',
       accentClass: 'border-surface-border bg-surface-muted/40',
@@ -171,29 +173,29 @@ export default function DiagnosticInsights({ data }: DiagnosticInsightsProps) {
   if (riskiest) {
     const rs = latestRiskScore(riskiest);
     const level = rs > 20 ? 'HIGH' : rs > 8 ? 'MEDIUM' : 'LOW';
-    const levelColor = rs > 20 ? 'text-red-700' : rs > 8 ? 'text-amber-700' : 'text-green-700';
     cards.push({
       icon: <Target size={11} />,
-      question: 'Where is risk concentrated?',
+      question: t('diagnostic.riskConcentrated'),
       clusterName: riskiest.clusterName,
-      answer: `Risk score ${rs} — ${level}`,
-      detail: `${riskiest.points[riskiest.points.length - 1]?.criticalCount ?? 0} critical · ${riskiest.points[riskiest.points.length - 1]?.highCount ?? 0} high in latest run`,
+      answer: t('diagnostic.riskConcentratedValue', { score: rs, level }),
+      detail: t('diagnostic.riskConcentratedHint', {
+        critical: riskiest.points[riskiest.points.length - 1]?.criticalCount ?? 0,
+        high: riskiest.points[riskiest.points.length - 1]?.highCount ?? 0,
+      }),
       sparkPoints: riskiest.points.map(p => p.riskScore),
       sparkColor: rs > 20 ? '#ef4444' : rs > 8 ? '#f59e0b' : '#22c55e',
       accentClass: rs > 20 ? 'border-red-200 bg-red-50/60' : rs > 8 ? 'border-amber-200 bg-amber-50/60' : 'border-green-200 bg-green-50/60',
     });
-    // Add invisible levelColor usage to avoid lint issue
-    void levelColor;
   }
 
   // 3. Improved
   if (hasDelta && bestDelta < 0 && best !== worst) {
     cards.push({
       icon: <TrendingDown size={11} />,
-      question: 'Which area improved?',
+      question: t('diagnostic.improved'),
       clusterName: best.clusterName,
-      answer: `${bestDelta} defect${Math.abs(bestDelta) !== 1 ? 's' : ''} vs previous run`,
-      detail: `Down to ${latestCount(best)} — keep monitoring`,
+      answer: t('diagnostic.improvedValue', { count: Math.abs(bestDelta), delta: bestDelta }),
+      detail: t('diagnostic.improvedHint', { count: latestCount(best) }),
       sparkPoints: best.points.map(p => p.defectCount),
       sparkColor: '#22c55e',
       accentClass: 'border-green-200 bg-green-50/60',
@@ -207,12 +209,12 @@ export default function DiagnosticInsights({ data }: DiagnosticInsightsProps) {
     const isNew = firstCount === 0;
     cards.push({
       icon: <Zap size={11} />,
-      question: isNew ? "What's newly emerged?" : "What's growing fastest?",
+      question: isNew ? t('diagnostic.newlyEmerged') : t('diagnostic.fastestGrowing'),
       clusterName: emerged.clusterName,
       answer: isNew
-        ? `Appeared with ${latestC} defect${latestC !== 1 ? 's' : ''} this run`
-        : `Grew ${firstCount} → ${latestC} across ${runs.length} runs`,
-      detail: isNew ? 'Was absent in previous runs — investigate root cause' : 'Fastest proportional growth across all runs',
+        ? t('diagnostic.emergedHint', { count: latestC, plural: latestC !== 1 ? 's' : '' })
+        : t('diagnostic.grewHint', { from: firstCount, to: latestC, runs: runs.length }),
+      detail: isNew ? t('diagnostic.emergedSub') : t('diagnostic.grewSub'),
       sparkPoints: emerged.points.map(p => p.defectCount),
       sparkColor: '#8b5cf6',
       accentClass: 'border-purple-200 bg-purple-50/60',
@@ -229,10 +231,10 @@ export default function DiagnosticInsights({ data }: DiagnosticInsightsProps) {
     if (stable && !cards.find(c => c.clusterName === stable.clusterName)) {
       cards.push({
         icon: <AlertTriangle size={11} />,
-        question: 'Which area to focus on?',
+        question: t('diagnostic.focusOn'),
         clusterName: stable.clusterName,
-        answer: `Risk score ${latestRiskScore(stable)} with ${latestCount(stable)} open defects`,
-        detail: runs.length < 2 ? 'Run a second analysis to unlock delta insights' : 'Stable but still has open items',
+        answer: t('diagnostic.focusHint', { score: latestRiskScore(stable), count: latestCount(stable) }),
+        detail: runs.length < 2 ? t('diagnostic.runSecond') : t('diagnostic.stableHint'),
         sparkPoints: stable.points.map(p => p.defectCount),
         sparkColor: '#f59e0b',
         accentClass: 'border-amber-200 bg-amber-50/60',
@@ -245,7 +247,7 @@ export default function DiagnosticInsights({ data }: DiagnosticInsightsProps) {
   return (
     <div>
       <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-2.5">
-        Diagnostic Insights
+        {t('diagnostic.title')}
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
         {cards.map((card, i) => (
@@ -254,7 +256,7 @@ export default function DiagnosticInsights({ data }: DiagnosticInsightsProps) {
       </div>
       {!hasDelta && (
         <p className="text-[11px] text-text-muted mt-2 text-center">
-          Run a second UAT analysis to unlock delta-based insights (getting worse / improved).
+          {t('diagnostic.runSecond')}
         </p>
       )}
     </div>
