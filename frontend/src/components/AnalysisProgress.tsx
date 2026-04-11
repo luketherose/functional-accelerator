@@ -154,7 +154,6 @@ export default function AnalysisProgress({ progressStep }: Props) {
           {STEPS.map((step) => {
             const isDone = currentStep > 0 && step.id < currentStep;
             const isActive = step.id === currentStep;
-            const isPending = currentStep === 0 || step.id > currentStep;
             const Icon = step.icon;
 
             return (

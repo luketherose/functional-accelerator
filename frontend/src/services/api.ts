@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult } from '../types';
+import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult, DefectRow } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -183,6 +183,31 @@ export const uatApi = {
 
   delete: (projectId: string, analysisId: string) =>
     api.delete(`/api/uat/${projectId}/${analysisId}`).then(r => r.data),
+
+  /** Aggregate cluster list for a completed analysis run */
+  listClusters: (projectId: string, analysisId: string) =>
+    api.get<{
+      cluster_key: string;
+      cluster_name: string;
+      defect_count: number;
+      critical_count: number;
+      high_count: number;
+      medium_count: number;
+      low_count: number;
+    }[]>(`/api/uat/${projectId}/${analysisId}/clusters`).then(r => r.data),
+
+  /** Defects belonging to a specific cluster in an analysis run */
+  listClusterDefects: (projectId: string, analysisId: string, clusterKey: string) =>
+    api.get<DefectRow[]>(
+      `/api/uat/${projectId}/${analysisId}/clusters/${encodeURIComponent(clusterKey)}/defects`
+    ).then(r => r.data),
+
+  /** All defects ever ingested for a project (across all runs) */
+  listAllDefects: (projectId: string, limit = 500, offset = 0) =>
+    api.get<{ defects: DefectRow[]; total: number; limit: number; offset: number }>(
+      `/api/uat/${projectId}/defects/all`,
+      { params: { limit, offset } }
+    ).then(r => r.data),
 };
 
 export function parseUATResult(analysis: UATAnalysis): UATAnalysisResult | null {

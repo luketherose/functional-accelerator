@@ -12,6 +12,8 @@ import FileList from '../components/FileList';
 import AnalysisTabs from '../components/AnalysisTabs';
 import AnalysisProgress from '../components/AnalysisProgress';
 import UATDashboard from '../components/UATDashboard';
+import UATTrend from '../components/UATTrend';
+import ClusterDrillDown from '../components/ClusterDrillDown';
 import PageHeader from '../components/Layout/PageHeader';
 
 function formatDate(iso: string) {
@@ -51,6 +53,7 @@ export default function ProjectDetailPage() {
   const [selectedUAT, setSelectedUAT] = useState<UATAnalysis | null>(null);
   const [uatUploading, setUatUploading] = useState(false);
   const [isUATRunning, setIsUATRunning] = useState(false);
+  const [uatTab, setUatTab] = useState<'overview' | 'trend' | 'defects'>('overview');
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -526,7 +529,41 @@ export default function ProjectDetailPage() {
 
             {/* Right panel — UAT dashboard */}
             <div className="flex-1 overflow-hidden flex flex-col">
-              {isUATRunning && (
+              {/* UAT tab bar */}
+              <div className="flex shrink-0 border-b border-surface-border bg-white px-4 gap-1 pt-1.5">
+                <button
+                  onClick={() => setUatTab('overview')}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-all -mb-px ${uatTab === 'overview' ? 'border-purple-deep text-purple-deep' : 'border-transparent text-text-muted hover:text-text-primary'}`}
+                >
+                  <BarChart2 size={12} /> Overview
+                </button>
+                <button
+                  onClick={() => setUatTab('trend')}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-all -mb-px ${uatTab === 'trend' ? 'border-purple-deep text-purple-deep' : 'border-transparent text-text-muted hover:text-text-primary'}`}
+                >
+                  <History size={12} /> Trend
+                  {uatAnalyses.filter(a => a.status === 'done').length > 1 && (
+                    <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{uatAnalyses.filter(a => a.status === 'done').length}</span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setUatTab('defects')}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-all -mb-px ${uatTab === 'defects' ? 'border-purple-deep text-purple-deep' : 'border-transparent text-text-muted hover:text-text-primary'}`}
+                >
+                  <Database size={12} /> Defects
+                  {selectedUAT?.defect_count != null && (
+                    <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{selectedUAT.defect_count}</span>
+                  )}
+                </button>
+              </div>
+
+              {/* Trend tab */}
+              {uatTab === 'trend' && (
+                <UATTrend analyses={uatAnalyses} />
+              )}
+
+              {/* Overview tab */}
+              {uatTab === 'overview' && isUATRunning && (
                 <div className="flex-1 flex flex-col items-center justify-center gap-4">
                   <div className="w-16 h-16 rounded-2xl bg-brand-50 border border-brand-200 flex items-center justify-center">
                     <Loader2 size={26} className="animate-spin text-purple-deep" />
@@ -543,7 +580,7 @@ export default function ProjectDetailPage() {
                 </div>
               )}
 
-              {!isUATRunning && !selectedUAT && (
+              {uatTab === 'overview' && !isUATRunning && !selectedUAT && (
                 <div className="flex-1 flex flex-col items-center justify-center gap-4 text-text-muted">
                   <div className="w-16 h-16 rounded-2xl bg-surface border-2 border-dashed border-surface-border flex items-center justify-center">
                     <ShieldAlert size={22} className="text-text-muted" />
@@ -555,7 +592,7 @@ export default function ProjectDetailPage() {
                 </div>
               )}
 
-              {!isUATRunning && selectedUAT?.status === 'error' && (
+              {uatTab === 'overview' && !isUATRunning && selectedUAT?.status === 'error' && (
                 <div className="flex-1 flex flex-col items-center justify-center gap-3">
                   <AlertCircle size={28} className="text-red-400" />
                   <p className="text-sm font-medium text-text-primary">Analisi fallita</p>
@@ -563,10 +600,26 @@ export default function ProjectDetailPage() {
                 </div>
               )}
 
-              {!isUATRunning && selectedUAT && (() => {
+              {uatTab === 'overview' && !isUATRunning && selectedUAT && (() => {
                 const result = parseUATResult(selectedUAT);
                 return result ? <UATDashboard result={result} fileName={selectedUAT.file_name} /> : null;
               })()}
+
+              {/* Defects / Cluster drill-down tab */}
+              {uatTab === 'defects' && selectedUAT && id && (
+                <ClusterDrillDown analysis={selectedUAT} projectId={id} />
+              )}
+              {uatTab === 'defects' && !selectedUAT && (
+                <div className="flex-1 flex flex-col items-center justify-center gap-4 text-text-muted">
+                  <div className="w-16 h-16 rounded-2xl bg-surface border-2 border-dashed border-surface-border flex items-center justify-center">
+                    <Database size={22} className="text-text-muted" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-medium text-text-primary">No defect data yet</p>
+                    <p className="text-xs text-text-muted mt-1 max-w-xs">Run a UAT analysis to see defects grouped by cluster.</p>
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}

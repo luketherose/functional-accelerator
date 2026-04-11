@@ -128,6 +128,42 @@ export interface UATApplicationStat {
   riskScore: number;
 }
 
+export interface ClusterSummary {
+  clusterKey: string;
+  clusterName: string;
+  defectCount: number;
+  criticalCount: number;
+  highCount: number;
+  mediumCount: number;
+  lowCount: number;
+  riskScore: number;
+  riskLevel: 'high' | 'medium' | 'low';
+  topApplications: string[];
+  claudeSummary: string;
+  businessImpact: string;
+  recommendation: string;
+}
+
+/** A defect row returned by the drill-down cluster endpoint */
+export interface DefectRow {
+  id: string;
+  external_id: string;
+  title: string;
+  priority: 'Critical' | 'High' | 'Medium' | 'Low' | 'Unknown';
+  status: string;
+  application: string;
+  module: string;
+  description: string;
+  resolution: string;
+  detected_by: string;
+  assigned_to: string;
+  detected_date: string;
+  closed_date: string;
+  environment: string;
+  classification_method: 'rule' | 'unclassified';
+  matched_keywords: string;
+}
+
 export interface UATAnalysisResult {
   executiveSummary: string;
   overallRiskLevel: 'high' | 'medium' | 'low';
@@ -140,6 +176,7 @@ export interface UATAnalysisResult {
   riskAreas: { area: string; riskLevel: 'high' | 'medium' | 'low'; rationale: string; recommendation: string; relatedApplications: string[] }[];
   preventionActions: { action: string; priority: 'high' | 'medium' | 'low'; targetApplication: string; effort: 'low' | 'medium' | 'high' }[];
   qualityTrend: string;
+  clusterSummaries: ClusterSummary[];
 }
 
 export interface OpenQuestionFeedback {
