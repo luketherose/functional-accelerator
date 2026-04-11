@@ -4,8 +4,8 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import db from '../db';
-import { buildAnalysisPrompt, buildImpactPrototypePrompt } from '../services/promptBuilder';
-import { callClaude, callClaudeForHtml } from '../services/claude';
+import { buildAnalysisPrompt, buildImpactPrototypePrompt, buildDeepDiveSystemPrompt } from '../services/promptBuilder';
+import { callClaude, callClaudeForHtml, callClaudeChat } from '../services/claude';
 import { readImageAsBase64 } from '../services/fileParsing';
 import { renderHtmlToPng } from '../services/imageRenderer';
 import type { ProjectFile } from '../types';
@@ -100,10 +100,11 @@ router.post('/:projectId/:analysisId/impact-prototype', tmpUpload.single('file')
 
     if (!req.file) return res.status(400).json({ error: 'No image file uploaded' });
 
-    const { impactId, impactArea, impactDescription } = req.body as {
+    const { impactId, impactArea, impactDescription, userPrompt } = req.body as {
       impactId: string;
       impactArea: string;
       impactDescription: string;
+      userPrompt?: string;
     };
     if (!impactId || !impactArea || !impactDescription) {
       return res.status(400).json({ error: 'impactId, impactArea, and impactDescription are required' });
@@ -115,7 +116,7 @@ router.post('/:projectId/:analysisId/impact-prototype', tmpUpload.single('file')
     const { data, mediaType } = readImageAsBase64(req.file.path, req.file.mimetype);
     const imageBlock = { type: 'image' as const, source: { type: 'base64' as const, media_type: mediaType, data } };
 
-    const prompt = buildImpactPrototypePrompt({ area: impactArea, description: impactDescription }, project.name);
+    const prompt = buildImpactPrototypePrompt({ area: impactArea, description: impactDescription }, project.name, userPrompt);
     console.log(`[analysis] Generating HTML prototype for impact ${impactId}...`);
     const html = await callClaudeForHtml(prompt, imageBlock);
 
@@ -153,7 +154,8 @@ async function runAnalysisAsync(
 ) {
   try {
     const prompt = await buildAnalysisPrompt(project, files);
-    const inputSummary = `Project: ${project.name} | Files: ${files.length} (${files.filter(f => f.bucket === 'as-is').length} as-is, ${files.filter(f => f.bucket === 'to-be').length} to-be)`;
+    const brCount = files.filter(f => f.bucket === 'business-rules').length;
+    const inputSummary = `Project: ${project.name} | Files: ${files.length} (${files.filter(f => f.bucket === 'as-is').length} as-is, ${files.filter(f => f.bucket === 'to-be').length} to-be${brCount > 0 ? `, ${brCount} BR` : ''})`;
 
     console.log(`[analysis] Running ${analysisId} — ${inputSummary}`);
 
@@ -171,6 +173,40 @@ async function runAnalysisAsync(
     db.prepare(`UPDATE projects SET status = 'error', updated_at = datetime('now') WHERE id = ?`).run(projectId);
   }
 }
+
+// POST /api/analysis/:projectId/:analysisId/impact-deepdive
+router.post('/:projectId/:analysisId/impact-deepdive', async (req: Request, res: Response) => {
+  const { analysisId, projectId } = req.params as { analysisId: string; projectId: string };
+  const { impactArea, impactDescription, messages } = req.body as {
+    impactArea: string;
+    impactDescription: string;
+    messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+  };
+
+  if (!impactArea || !impactDescription || !Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: 'impactArea, impactDescription, and messages are required' });
+  }
+
+  try {
+    const analysis = db.prepare('SELECT id FROM analyses WHERE id = ? AND project_id = ?').get(analysisId, projectId);
+    if (!analysis) return res.status(404).json({ error: 'Analysis not found' });
+
+    const project = db.prepare('SELECT name, description FROM projects WHERE id = ?').get(projectId) as { name: string; description: string } | undefined;
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    const files = db.prepare('SELECT * FROM files WHERE project_id = ? ORDER BY created_at DESC').all(projectId) as ProjectFile[];
+
+    const systemPrompt = buildDeepDiveSystemPrompt(project, files, { area: impactArea, description: impactDescription });
+    console.log(`[analysis] Deep dive for impact "${impactArea}" in project ${projectId}, ${messages.length} messages`);
+    const response = await callClaudeChat(systemPrompt, messages);
+
+    res.json({ response });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Deep dive failed';
+    console.error('[analysis] Deep dive error:', msg);
+    res.status(500).json({ error: msg });
+  }
+});
 
 // DELETE /api/analysis/:projectId/:analysisId
 router.delete('/:projectId/:analysisId', (req: Request, res: Response) => {

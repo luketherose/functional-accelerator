@@ -12,6 +12,7 @@ interface FileListProps {
 const BUCKET_CONFIG: Record<FileBucket, { label: string; badgeClass: string; emptyText: string }> = {
   'as-is': { label: 'As-Is Documents', badgeClass: 'badge-asis', emptyText: 'No as-is documents uploaded yet.' },
   'to-be': { label: 'To-Be Documents', badgeClass: 'badge-tobe', emptyText: 'No to-be documents uploaded yet.' },
+  'business-rules': { label: 'Business Rules', badgeClass: 'badge-br', emptyText: 'No business rules uploaded yet.' },
 };
 
 function formatBytes(bytes: number): string {
@@ -93,7 +94,7 @@ function BucketSection({ bucket, files, projectId, onDeleted }: { bucket: FileBu
 }
 
 export default function FileList({ files, projectId, onDeleted }: FileListProps) {
-  const buckets: FileBucket[] = ['as-is', 'to-be'];
+  const buckets: FileBucket[] = ['as-is', 'to-be', 'business-rules'];
 
   return (
     <div className="space-y-6">

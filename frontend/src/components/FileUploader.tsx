@@ -28,6 +28,11 @@ const BUCKET_META: Record<FileBucket, { label: string; color: string; descriptio
     color: 'border-violet-300 bg-violet-50/50',
     description: 'Requirements & target state',
   },
+  'business-rules': {
+    label: 'Business Rules',
+    color: 'border-emerald-300 bg-emerald-50/50',
+    description: 'Provided BR — taken as factum positum',
+  },
 };
 
 const ACCEPTED = '.pdf,.doc,.docx,.txt,.md,.png,.jpg,.jpeg,.gif,.webp,.xlsx,.xls';
