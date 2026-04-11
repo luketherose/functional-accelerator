@@ -1,5 +1,58 @@
 import type { ProjectFile } from '../types';
 
+// ─── Pipeline-internal types ────────────────────────────────────────────────
+
+/** One logical functional area extracted from a single document side (AS-IS or TO-BE). */
+export interface FunctionalArea {
+  name: string;
+  category: 'data' | 'process' | 'rule' | 'ui' | 'integration' | 'security' | 'other';
+  description: string;
+  keyFields: string[];
+  businessRules: string[];
+  sourceRefs: string[];
+}
+
+export interface FunctionalCatalog {
+  areas: FunctionalArea[];
+}
+
+/** Evidence attached to a single side of a delta. */
+export interface DeltaEvidence {
+  section: string;
+  quote: string;
+  verified: boolean;
+}
+
+/** One detected functional change between AS-IS and TO-BE. */
+export interface Delta {
+  functionalArea: string;
+  changeType: 'MODIFIED' | 'ADDED' | 'REMOVED' | 'UNCHANGED' | 'UNCERTAIN';
+  asIsEvidence: DeltaEvidence | null;
+  toBeEvidence: DeltaEvidence | null;
+  deltaSummary: string;
+  severity: 'high' | 'medium' | 'low';
+  category: 'functional' | 'uiux' | 'businessRule' | 'screen' | 'integration';
+  confidence: number;
+  needsHumanReview: boolean;
+}
+
+export interface ComparisonResult {
+  deltas: Delta[];
+  coverageMetrics: {
+    asisAreasFound: number;
+    tobeAreasFound: number;
+    alignedAreas: number;
+    uncertainAreas: number;
+    coverageWarning: string | null;
+  };
+}
+
+export interface ImpactFeedback {
+  impact_id: string;
+  sentiment: 'positive' | 'negative';
+  motivation: string | null;
+}
+
 export interface ImageBlock {
   type: 'image';
   source: {
@@ -15,7 +68,8 @@ export interface ImageBlock {
  */
 export async function buildAnalysisPrompt(
   project: { name: string; description: string },
-  files: ProjectFile[]
+  files: ProjectFile[],
+  prevFeedback: ImpactFeedback[] = []
 ): Promise<string> {
   const asisFiles = files.filter(f => f.bucket === 'as-is');
   const tobeFiles = files.filter(f => f.bucket === 'to-be');
@@ -37,6 +91,25 @@ export async function buildAnalysisPrompt(
 
   const hasBrFiles = brFiles.length > 0;
 
+  const feedbackSection = prevFeedback.length > 0 ? `
+---
+
+## FEEDBACK FROM PREVIOUS ANALYSIS (mandatory — read before producing output)
+
+A human reviewer evaluated the previous analysis run and left the following corrections. You MUST take these into account:
+
+${prevFeedback.map(f => {
+    const label = f.sentiment === 'negative' ? '❌ INCORRECT — do NOT reproduce this impact' : '✅ CONFIRMED CORRECT';
+    const reason = f.motivation ? `\n   Reviewer note: "${f.motivation}"` : '';
+    return `- Impact **${f.impact_id}**: ${label}${reason}`;
+  }).join('\n')}
+
+Rules:
+- Impacts marked ❌ INCORRECT must NOT appear in the new output, even if you find evidence for them in the documents.
+- Impacts marked ✅ CONFIRMED CORRECT should be preserved (updated if new evidence warrants it, but not dropped without reason).
+- If the reviewer left a note, use it to understand what was wrong or right and adjust accordingly.
+` : '';
+
   return `You are an expert functional analyst and UI/UX architect.
 You have been given documentation for a software project and must produce a thorough impact analysis.
 
@@ -53,6 +126,7 @@ ${formatFileSection(asisFiles, 'AS-IS Documentation (Current State)')}
 ${formatFileSection(tobeFiles, 'TO-BE Documentation (Target Requirements)')}
 
 ${brSection}
+${feedbackSection}
 
 ---
 
@@ -145,48 +219,338 @@ Reproduce the FULL screen as an HTML page, applying the described change. Then v
 
 /**
  * Builds the system prompt for a per-impact deep-dive conversation.
- * All project files are embedded as context so Claude can cite exact passages.
+ *
+ * When `retrievedContext` is provided (RAG mode), its pre-retrieved chunks are used
+ * as the documentation context instead of dumping full file texts.
+ * Falls back to full file texts when no indexed chunks exist (legacy mode).
  */
 export function buildDeepDiveSystemPrompt(
   project: { name: string; description: string },
-  files: ProjectFile[],
-  impact: { area: string; description: string }
+  impact: { area: string; description: string },
+  retrievedContext?: { asis: string; tobe: string; br: string },
+  files?: ProjectFile[]
 ): string {
-  const asisFiles = files.filter(f => f.bucket === 'as-is');
-  const tobeFiles = files.filter(f => f.bucket === 'to-be');
-  const brFiles = files.filter(f => f.bucket === 'business-rules');
+  let documentationBlock: string;
 
-  const formatFiles = (fileList: ProjectFile[], title: string): string => {
-    if (fileList.length === 0) return `### ${title}\n_No documents uploaded._\n`;
-    return `### ${title}\n` + fileList.map(f =>
-      f.extracted_text
-        ? `\n**${f.original_name}**\n\`\`\`\n${f.extracted_text.slice(0, 30_000)}\n\`\`\``
-        : `\n**${f.original_name}** (${f.mime_type}) — [no extractable text]`
-    ).join('\n\n');
-  };
+  if (retrievedContext) {
+    // RAG mode: use pre-retrieved, impact-focused chunks
+    documentationBlock = `## AS-IS — Relevant Passages
 
-  const brSection = brFiles.length > 0 ? `\n${formatFiles(brFiles, 'Business Rules')}` : '';
+${retrievedContext.asis}
+
+## TO-BE — Relevant Passages
+
+${retrievedContext.tobe}${retrievedContext.br ? `\n\n## Business Rules — Relevant Passages\n\n${retrievedContext.br}` : ''}`;
+  } else {
+    // Fallback: full file texts (legacy, no indexed chunks)
+    const asisFiles = (files ?? []).filter(f => f.bucket === 'as-is');
+    const tobeFiles = (files ?? []).filter(f => f.bucket === 'to-be');
+    const brFiles = (files ?? []).filter(f => f.bucket === 'business-rules');
+
+    const formatFiles = (fileList: ProjectFile[], title: string): string => {
+      if (fileList.length === 0) return `### ${title}\n_No documents uploaded._\n`;
+      return `### ${title}\n` + fileList.map(f =>
+        f.extracted_text
+          ? `\n**${f.original_name}**\n\`\`\`\n${f.extracted_text.slice(0, 30_000)}\n\`\`\``
+          : `\n**${f.original_name}** (${f.mime_type}) — [no extractable text]`
+      ).join('\n\n');
+    };
+
+    const brSection = brFiles.length > 0 ? `\n${formatFiles(brFiles, 'Business Rules')}` : '';
+
+    documentationBlock = `${formatFiles(asisFiles, 'AS-IS Documentation (Current State)')}
+
+${formatFiles(tobeFiles, 'TO-BE Documentation (Target Requirements)')}${brSection}`;
+  }
 
   return `You are an expert functional analyst for the project "${project.name}".${project.description ? `\nProject context: ${project.description}` : ''}
 
-You are answering questions about a specific functional/UI impact identified in the analysis:
+## YOUR SCOPE — READ THIS FIRST
+
+You are in a focused deep-dive session on ONE specific impact:
 
 **Impact area:** ${impact.area}
 **Impact description:** ${impact.description}
 
-Your goal is to provide precise, document-grounded answers. When relevant, cite the exact paragraph or passage from the documentation below.
+⚠️ STRICT SCOPE RULE: Every answer you give MUST be limited exclusively to this impact area ("${impact.area}"). Do not discuss, reference, or expand into other functional areas, screens, or topics — even if they appear in the documentation. If the user's question drifts outside this scope, acknowledge it briefly and redirect back to "${impact.area}".
+
+The documentation passages below have already been filtered to be relevant to "${impact.area}". Focus your analysis on these passages.
 
 ## PROJECT DOCUMENTATION
 
-${formatFiles(asisFiles, 'AS-IS Documentation (Current State)')}
+${documentationBlock}
 
-${formatFiles(tobeFiles, 'TO-BE Documentation (Target Requirements)')}
-${brSection}
-
-## GUIDELINES
-- Be precise and cite exact text from the documents when possible
-- Clearly distinguish between AS-IS (current) and TO-BE (target) behaviour
-- If the documents are insufficient to answer, say so explicitly and explain what is missing
+## ANSWER GUIDELINES
+- Cite the exact paragraph or passage from the documentation when possible (include the section title or page reference if available)
+- Clearly distinguish between AS-IS (current state) and TO-BE (target state)
+- If the documents do not contain enough information to answer, say so explicitly — do not invent or extrapolate
 - Answer in the same language the user writes in
-- Keep answers focused on the specific impact area above; if the user asks something unrelated, gently redirect`;
+- Be concise and precise; avoid generic statements that would apply to any impact
+
+## OUTPUT FORMAT (mandatory)
+- Use markdown formatting throughout your response
+- Use ## or ### headings for each logical section (e.g. ## AS-IS State, ## TO-BE Changes, ## Summary)
+- Use **bold** to highlight key terms, field names, and important values
+- Use bullet points or numbered lists for enumerations — never write them as prose
+- Use markdown tables (with | column | syntax) whenever comparing AS-IS vs TO-BE side by side
+- Use > blockquotes only for verbatim quotes from the source documents
+- Do NOT use raw colons as pseudo-headings (e.g. "Section Name:") — use ## instead`;
+}
+
+// ─── Pipeline Step Prompts ───────────────────────────────────────────────────
+
+const EXTRACTION_SYSTEM = `You are a deterministic functional extraction engine.
+Your task is to read documentation and produce a structured catalog of every functional area described.
+
+STRICT EXTRACTION RULES:
+- Extract ONLY what is explicitly stated in the documents
+- Do NOT infer, assume, or fill gaps in the documentation
+- Do NOT compare with any other document or state — this is a standalone extraction
+- Attach at least one source reference (section title or heading) to every area
+- If a rule or field is only implied, do NOT include it
+- Prefer precision over completeness: it is better to extract fewer, well-evidenced areas than many speculative ones
+- Return ONLY raw JSON — no prose, no markdown fences`;
+
+const COMPARISON_SYSTEM = `You are a deterministic functional comparison engine.
+Your task is to compare an AS-IS functional catalog with a TO-BE functional catalog and identify only genuine, evidence-backed deltas.
+
+STRICT COMPARISON RULES:
+- Do NOT declare a change unless BOTH the AS-IS evidence AND the TO-BE evidence explicitly support it
+- Do NOT speculate or infer undocumented behavior
+- Do NOT assume that similar-sounding areas are the same unless clearly confirmed by the documents
+- Do NOT assume similarity across countries, products, systems, or configurations
+- If evidence for a change is incomplete, use changeType "UNCERTAIN" — never fabricate evidence
+- If an area appears in both AS-IS and TO-BE with no documented difference, use "UNCHANGED"
+- PREFER OMISSION OVER SPECULATION: it is better to miss a change than to invent one
+- Quote exact passages from the source documents (verbatim or very close) for every piece of evidence
+- Return ONLY raw JSON — no prose, no markdown fences
+
+CATEGORY ASSIGNMENT GUIDE:
+- "functional": business logic, rules, calculations, data processing, workflows
+- "uiux": any change that affects a screen, form, field label, validation message, user flow step, button, table column, or page layout — even if the root cause is functional. If a functional change requires the user to interact differently with a screen, ALSO create a separate uiux-categorized delta for that screen interaction.
+- "screen": new or removed screens / pages
+- "businessRule": explicit constraints, thresholds, decision rules
+- "integration": API, external system, data exchange changes
+You MUST produce at least one delta with category "uiux" whenever the TO-BE documentation describes or implies changes to user-facing screens, forms, or workflows.`;
+
+const SYNTHESIS_SYSTEM = `You are a functional analysis report generator.
+You receive a list of verified functional deltas (with evidence) and must convert them into a structured analysis report.
+
+RULES:
+- Only include deltas with changeType MODIFIED, ADDED, or REMOVED (skip UNCHANGED and UNCERTAIN unless the uncertainty is important to flag)
+- Preserve the evidence-backed nature: each impact description must state what changes from AS-IS to TO-BE
+- UNCERTAIN deltas must appear in openQuestions, not in functional/UI impacts
+- Keep descriptions concise (2-3 sentences max per item)
+- businessRulesExtracted should include explicit rules from the TO-BE documentation
+- Return ONLY raw JSON — no prose, no markdown fences
+
+MANDATORY UI/UX RULE:
+uiUxImpacts MUST contain at least 2 entries — always, with no exceptions.
+If fewer than 2 deltas are tagged category="uiux", you MUST derive additional UI/UX impacts by reasoning about the screen-level consequences of the functional deltas:
+- Which forms, fields, labels, or validation messages must change?
+- Which user flows or navigation steps are affected?
+- Which table columns, filters, or display formats must be updated?
+- Are there new screens, modals, or confirmation dialogs required?
+Use the functional deltas as input and describe the concrete UI/UX change a user would notice. Each uiUxImpacts entry must describe the AS-IS screen state vs the TO-BE screen state.`;
+
+/**
+ * System prompt for the AS-IS or TO-BE extraction step.
+ */
+export function buildExtractionSystemPrompt(): string {
+  return EXTRACTION_SYSTEM;
+}
+
+/**
+ * User prompt for extracting a functional catalog from one document side.
+ */
+export function buildExtractionUserPrompt(
+  docType: 'AS-IS' | 'TO-BE',
+  context: string
+): string {
+  return `Extract the complete functional catalog from the following ${docType} documentation.
+
+For each functional area, extract:
+- name: as it appears in the document (use the exact term, not a paraphrase)
+- category: one of data | process | rule | ui | integration | security | other
+- description: 1-2 sentences, staying close to the source wording
+- keyFields: list of field names, parameters, flags, or data attributes explicitly mentioned
+- businessRules: list of explicit constraints, validations, thresholds, or decision rules
+- sourceRefs: list of section headings or titles where this area is documented
+
+Return ONLY raw JSON with this exact schema:
+{
+  "areas": [
+    {
+      "name": "string",
+      "category": "data|process|rule|ui|integration|security|other",
+      "description": "string",
+      "keyFields": ["string"],
+      "businessRules": ["string"],
+      "sourceRefs": ["string"]
+    }
+  ]
+}
+
+${docType} Documentation:
+${context}`;
+}
+
+/**
+ * System prompt for the comparison step.
+ */
+export function buildComparisonSystemPrompt(): string {
+  return COMPARISON_SYSTEM;
+}
+
+/**
+ * User prompt for comparing AS-IS and TO-BE catalogs and producing deltas with evidence.
+ */
+export function buildComparisonUserPrompt(
+  asisCatalog: FunctionalCatalog,
+  tobeCatalog: FunctionalCatalog,
+  asisContext: string,
+  tobeContext: string
+): string {
+  return `Compare the AS-IS functional catalog and the TO-BE functional catalog below.
+Identify every functional delta — areas that are MODIFIED, ADDED, or REMOVED.
+Also flag areas that clearly correspond but have no documented change (UNCHANGED).
+For any area where the evidence is insufficient to determine the change type, use UNCERTAIN.
+
+For each delta you MUST provide:
+- The exact section name and a short verbatim (or near-verbatim) quote from the source document as evidence
+- A confidence score between 0.0 (no confidence) and 1.0 (fully confirmed by both sides)
+- needsHumanReview: true if confidence < 0.7 or changeType is UNCERTAIN
+
+Return ONLY raw JSON with this exact schema:
+{
+  "deltas": [
+    {
+      "functionalArea": "string",
+      "changeType": "MODIFIED|ADDED|REMOVED|UNCHANGED|UNCERTAIN",
+      "asIsEvidence": { "section": "string", "quote": "string" } | null,
+      "toBeEvidence": { "section": "string", "quote": "string" } | null,
+      "deltaSummary": "string — 1-2 sentences describing what changes",
+      "severity": "high|medium|low",
+      "category": "functional|uiux|businessRule|screen|integration",
+      "confidence": 0.0,
+      "needsHumanReview": false
+    }
+  ],
+  "coverageMetrics": {
+    "asisAreasFound": ${asisCatalog.areas.length},
+    "tobeAreasFound": ${tobeCatalog.areas.length},
+    "alignedAreas": 0,
+    "uncertainAreas": 0,
+    "coverageWarning": null
+  }
+}
+
+--- AS-IS FUNCTIONAL CATALOG ---
+${JSON.stringify(asisCatalog, null, 2)}
+
+--- TO-BE FUNCTIONAL CATALOG ---
+${JSON.stringify(tobeCatalog, null, 2)}
+
+--- AS-IS SOURCE PASSAGES (for evidence verification) ---
+${asisContext}
+
+--- TO-BE SOURCE PASSAGES (for evidence verification) ---
+${tobeContext}`;
+}
+
+/**
+ * System prompt for the synthesis step.
+ */
+export function buildSynthesisSystemPrompt(): string {
+  return SYNTHESIS_SYSTEM;
+}
+
+export interface OQAnswer {
+  question_text: string;
+  sentiment: 'positive' | 'negative' | null;
+  answer: string | null;
+}
+
+/**
+ * User prompt to synthesize verified deltas into the final AnalysisResult schema.
+ */
+export function buildSynthesisUserPrompt(
+  project: { name: string; description: string },
+  deltas: Delta[],
+  coverageWarning: string | null,
+  prevFeedback: ImpactFeedback[] = [],
+  prevOQAnswers: OQAnswer[] = []
+): string {
+  const feedbackSection = prevFeedback.length > 0 ? `
+--- FEEDBACK FROM PREVIOUS ANALYSIS ---
+${prevFeedback.map(f => {
+    const label = f.sentiment === 'negative' ? 'INCORRECT — do NOT reproduce' : 'CONFIRMED CORRECT';
+    const note = f.motivation ? ` (reviewer note: "${f.motivation}")` : '';
+    return `- Impact ${f.impact_id}: ${label}${note}`;
+  }).join('\n')}
+` : '';
+
+  const answeredQuestions = prevOQAnswers.filter(q => q.answer?.trim() || q.sentiment === 'negative');
+  const oqSection = answeredQuestions.length > 0 ? `
+--- OPEN QUESTIONS FROM PREVIOUS RUN — REVIEWER RESPONSES ---
+${answeredQuestions.map(q => {
+    if (q.sentiment === 'negative') return `- DISMISSED (no longer relevant): "${q.question_text}"`;
+    const ans = q.answer?.trim() ? `\n  Reviewer answer: "${q.answer.trim()}"` : '';
+    return `- ANSWERED: "${q.question_text}"${ans}`;
+  }).join('\n')}
+
+Rules for open questions:
+- Do NOT re-raise questions marked DISMISSED.
+- For ANSWERED questions: incorporate the answer into your analysis. Only keep them in openQuestions if still genuinely unresolved after considering the answer.
+` : '';
+
+  const coverageNote = coverageWarning
+    ? `\n⚠️ Coverage warning: ${coverageWarning}\nInclude this warning in the executiveSummary and as an openQuestion.\n`
+    : '';
+
+  return `Convert the verified functional deltas below into the final analysis report for project "${project.name}".
+${project.description ? `Project context: ${project.description}\n` : ''}
+${feedbackSection}${oqSection}${coverageNote}
+Rules:
+- functionalImpacts: include deltas with category "functional" and changeType MODIFIED/ADDED/REMOVED
+- uiUxImpacts: MANDATORY — include deltas with category "uiux". If fewer than 2 are available, derive additional entries from the functional deltas by describing the screen-level change the user would see (form fields, labels, validation messages, table columns, navigation flows). This array MUST have at least 2 entries.
+- affectedScreens: derive from deltas with category "screen" or "uiux"
+- businessRulesExtracted: include all business rules from MODIFIED/ADDED deltas (source = "to-be" or "provided")
+- proposedChanges: one actionable change per significant delta
+- assumptions: list any areas where evidence confidence < 0.8
+- openQuestions: include all UNCERTAIN deltas; also include the coverage warning if present
+- Impacts marked "INCORRECT — do NOT reproduce" must not appear even if evidence supports them
+- Keep each description to 2-3 sentences
+
+Return ONLY raw JSON with this exact schema:
+{
+  "executiveSummary": "string",
+  "functionalImpacts": [
+    { "id": "FI-01", "area": "string", "description": "string", "severity": "high|medium|low" }
+  ],
+  "uiUxImpacts": [
+    { "id": "UX-01", "area": "string", "description": "string", "severity": "high|medium|low" }
+  ],
+  "affectedScreens": [
+    {
+      "name": "string",
+      "currentBehavior": "string",
+      "proposedBehavior": "string",
+      "changeType": "modified|new|removed"
+    }
+  ],
+  "businessRulesExtracted": [
+    { "id": "BR-01", "description": "string", "source": "to-be|as-is|inferred" }
+  ],
+  "proposedChanges": [
+    { "screen": "string", "change": "string", "priority": "high|medium|low" }
+  ],
+  "prototypeInstructions": "",
+  "prototypeHtml": "",
+  "assumptions": ["string"],
+  "openQuestions": ["string"]
+}
+
+--- VERIFIED DELTAS ---
+${JSON.stringify(deltas, null, 2)}`;
 }

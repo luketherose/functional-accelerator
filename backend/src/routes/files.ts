@@ -5,6 +5,7 @@ import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../db';
 import { parseFile } from '../services/fileParsing';
+import { indexFile, deleteFileChunks } from '../services/vectorStore';
 import { FileBucket } from '../types';
 
 const router = Router();
@@ -100,6 +101,14 @@ router.post('/:projectId/upload', upload.single('file'), async (req: Request, re
 
     const fileRecord = db.prepare('SELECT * FROM files WHERE id = ?').get(id);
     res.status(201).json(fileRecord);
+
+    // Index chunks in background — don't block the upload response
+    const originalName = req.file.originalname;
+    const projectId = req.params.projectId as string;
+    if (extractedText) {
+      indexFile(id, projectId, bucket, originalName, extractedText)
+        .catch(err => console.error('[files] Indexing failed for', originalName, err));
+    }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Upload failed';
     res.status(500).json({ error: msg });
@@ -113,6 +122,7 @@ router.delete('/:projectId/:fileId', (req: Request, res: Response) => {
     if (!file) return res.status(404).json({ error: 'File not found' });
 
     try { fs.unlinkSync(file.path); } catch (_) {}
+    deleteFileChunks(req.params.fileId as string);
     db.prepare('DELETE FROM files WHERE id = ?').run(req.params.fileId);
 
     res.json({ success: true });
@@ -120,6 +130,70 @@ router.delete('/:projectId/:fileId', (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to delete file' });
   }
 });
+
+// GET /api/files/:projectId/index-status — how many files are indexed vs total
+router.get('/:projectId/index-status', (req: Request, res: Response) => {
+  try {
+    const projectId = req.params.projectId as string;
+    const total = (db.prepare('SELECT COUNT(*) as c FROM files WHERE project_id = ?').get(projectId) as { c: number }).c;
+    const indexed = (db.prepare(
+      'SELECT COUNT(DISTINCT file_id) as c FROM file_chunks WHERE project_id = ?'
+    ).get(projectId) as { c: number }).c;
+    res.json({ total, indexed, pending: total - indexed });
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch index status' });
+  }
+});
+
+// POST /api/files/:projectId/reindex — re-index all files for a project
+// Fires async, streams progress via polling. Returns immediately with job info.
+router.post('/:projectId/reindex', async (req: Request, res: Response) => {
+  const projectId = req.params.projectId as string;
+
+  try {
+    const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    const files = db.prepare(
+      'SELECT id, original_name, bucket, extracted_text FROM files WHERE project_id = ? ORDER BY created_at ASC'
+    ).all(projectId) as { id: string; original_name: string; bucket: string; extracted_text: string | null }[];
+
+    const withText = files.filter(f => f.extracted_text);
+    res.json({ message: 'Re-indexing started', total: withText.length });
+
+    // Run async — don't await
+    reindexAllAsync(projectId, withText).catch(err =>
+      console.error('[files] Re-index error for project', projectId, err)
+    );
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Re-index failed';
+    res.status(500).json({ error: msg });
+  }
+});
+
+async function reindexAllAsync(
+  projectId: string,
+  files: { id: string; original_name: string; bucket: string; extracted_text: string | null }[]
+) {
+  let done = 0;
+  for (const file of files) {
+    if (!file.extracted_text) continue;
+    try {
+      await indexFile(
+        file.id,
+        projectId,
+        file.bucket as FileBucket,
+        file.original_name,
+        file.extracted_text
+      );
+      done++;
+      console.log(`[files] Re-indexed ${done}/${files.length}: ${file.original_name}`);
+    } catch (err) {
+      console.error(`[files] Re-index failed for ${file.original_name}:`, err);
+    }
+  }
+  console.log(`[files] Re-index complete: ${done}/${files.length} files indexed for project ${projectId}`);
+}
 
 // GET /api/files/:projectId/:fileId/preview — serve file for frontend preview
 router.get('/:projectId/:fileId/preview', (req: Request, res: Response) => {

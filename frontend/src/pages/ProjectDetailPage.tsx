@@ -3,22 +3,25 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Play, Loader2, RefreshCw, Trash2,
   Clock, CheckCircle2, AlertCircle, FileText, History,
-  Pencil, X, Check
+  Pencil, X, Check, Database, ShieldAlert, Upload, BarChart2
 } from 'lucide-react';
-import type { ProjectDetail, Analysis, FileBucket } from '../types';
-import { projectsApi, analysisApi, parseAnalysisResult } from '../services/api';
+import type { ProjectDetail, Analysis, FileBucket, UATAnalysis } from '../types';
+import { projectsApi, analysisApi, filesApi, uatApi, parseAnalysisResult, parseUATResult } from '../services/api';
 import FileUploader from '../components/FileUploader';
 import FileList from '../components/FileList';
 import AnalysisTabs from '../components/AnalysisTabs';
+import AnalysisProgress from '../components/AnalysisProgress';
+import UATDashboard from '../components/UATDashboard';
 import PageHeader from '../components/Layout/PageHeader';
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-GB', {
+  return new Date(iso).toLocaleDateString('it-IT', {
     day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
   });
 }
 
-type ActiveSection = 'documents' | 'analysis';
+type ActiveView = 'analysis' | 'uat';
+type AnalysisPanel = 'documents' | 'history';
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -27,7 +30,8 @@ export default function ProjectDetailPage() {
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [activeSection, setActiveSection] = useState<ActiveSection>('documents');
+  const [activeView, setActiveView] = useState<ActiveView>('analysis');
+  const [analysisPanel, setAnalysisPanel] = useState<AnalysisPanel>('documents');
   const [selectedAnalysis, setSelectedAnalysis] = useState<Analysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [, setPollingId] = useState<ReturnType<typeof setInterval> | null>(null);
@@ -38,6 +42,16 @@ export default function ProjectDetailPage() {
   const [editDescription, setEditDescription] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // RAG index status
+  const [indexStatus, setIndexStatus] = useState<{ total: number; indexed: number; pending: number } | null>(null);
+  const [reindexing, setReindexing] = useState(false);
+
+  // UAT state
+  const [uatAnalyses, setUatAnalyses] = useState<UATAnalysis[]>([]);
+  const [selectedUAT, setSelectedUAT] = useState<UATAnalysis | null>(null);
+  const [uatUploading, setUatUploading] = useState(false);
+  const [isUATRunning, setIsUATRunning] = useState(false);
+
   const load = useCallback(async () => {
     if (!id) return;
     try {
@@ -46,7 +60,6 @@ export default function ProjectDetailPage() {
       const latestDone = data.analyses.find((a: Analysis) => a.status === 'done');
       if (latestDone && !selectedAnalysis) {
         setSelectedAnalysis(latestDone);
-        setActiveSection('analysis');
       }
     } catch {
       setError('Project not found or backend unavailable.');
@@ -57,7 +70,78 @@ export default function ProjectDetailPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Poll while analyzing
+  useEffect(() => {
+    if (!id) return;
+    filesApi.indexStatus(id).then(setIndexStatus).catch(() => {});
+  }, [id]);
+
+  const handleReindex = async () => {
+    if (!id) return;
+    setReindexing(true);
+    try {
+      await filesApi.reindex(id);
+      const poll = setInterval(async () => {
+        const status = await filesApi.indexStatus(id).catch(() => null);
+        if (status) {
+          setIndexStatus(status);
+          if (status.pending === 0) { clearInterval(poll); setReindexing(false); }
+        }
+      }, 3000);
+    } catch {
+      setReindexing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!id) return;
+    uatApi.list(id).then(list => {
+      setUatAnalyses(list);
+      const latestDone = list.find((a: UATAnalysis) => a.status === 'done');
+      if (latestDone) setSelectedUAT(latestDone);
+    }).catch(() => {});
+  }, [id]);
+
+  useEffect(() => {
+    if (!isUATRunning || !id) return;
+    const interval = setInterval(async () => {
+      try {
+        const list = await uatApi.list(id);
+        setUatAnalyses(list);
+        const running = list.find((a: UATAnalysis) => a.status === 'running');
+        if (!running) {
+          setIsUATRunning(false);
+          clearInterval(interval);
+          const done = list.find((a: UATAnalysis) => a.status === 'done');
+          if (done) setSelectedUAT(done);
+        }
+      } catch { /* keep polling */ }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [isUATRunning, id]);
+
+  const handleUATUpload = async (file: File) => {
+    if (!id) return;
+    setUatUploading(true);
+    try {
+      await uatApi.run(id, file);
+      setIsUATRunning(true);
+      const list = await uatApi.list(id);
+      setUatAnalyses(list);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to start UAT analysis';
+      alert(msg);
+    } finally {
+      setUatUploading(false);
+    }
+  };
+
+  const handleDeleteUAT = async (analysisId: string) => {
+    if (!id || !confirm('Eliminare questa analisi UAT?')) return;
+    await uatApi.delete(id, analysisId);
+    if (selectedUAT?.id === analysisId) setSelectedUAT(null);
+    setUatAnalyses(await uatApi.list(id));
+  };
+
   useEffect(() => {
     if (isAnalyzing && id) {
       const interval = setInterval(async () => {
@@ -69,10 +153,7 @@ export default function ProjectDetailPage() {
             setIsAnalyzing(false);
             clearInterval(interval);
             const done = data.analyses.find((a: Analysis) => a.status === 'done');
-            if (done) {
-              setSelectedAnalysis(done);
-              setActiveSection('analysis');
-            }
+            if (done) setSelectedAnalysis(done);
           }
         } catch { /* keep polling */ }
       }, 2000);
@@ -86,17 +167,15 @@ export default function ProjectDetailPage() {
     setIsAnalyzing(true);
     try {
       await analysisApi.run(id);
-      setActiveSection('analysis');
     } catch (err: unknown) {
       const axErr = err as { response?: { data?: { error?: string } }; message?: string };
-      const msg = axErr?.response?.data?.error ?? axErr?.message ?? 'Failed to start analysis';
-      alert(msg);
+      alert(axErr?.response?.data?.error ?? axErr?.message ?? 'Failed to start analysis');
       setIsAnalyzing(false);
     }
   };
 
   const handleDeleteAnalysis = async (analysisId: string) => {
-    if (!id || !confirm('Delete this analysis?')) return;
+    if (!id || !confirm('Eliminare questa analisi?')) return;
     await analysisApi.delete(id, analysisId);
     if (selectedAnalysis?.id === analysisId) setSelectedAnalysis(null);
     load();
@@ -126,7 +205,7 @@ export default function ProjectDetailPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64 text-text-muted">
-        <Loader2 size={20} className="animate-spin mr-2" /> Loading project...
+        <Loader2 size={20} className="animate-spin mr-2" /> Caricamento…
       </div>
     );
   }
@@ -136,7 +215,7 @@ export default function ProjectDetailPage() {
       <div className="p-8">
         <div className="card p-8 text-center max-w-sm mx-auto">
           <p className="text-sm text-red-500 mb-3">{error || 'Project not found'}</p>
-          <button className="btn-secondary" onClick={() => navigate('/')}>Back to Projects</button>
+          <button className="btn-secondary" onClick={() => navigate('/')}>← Progetti</button>
         </div>
       </div>
     );
@@ -148,36 +227,18 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header — normal or edit mode */}
+      {/* Header */}
       {editing ? (
-        <div className="border-b border-surface-border bg-white px-8 py-5">
-          <div className="flex items-center gap-1.5 text-xs text-text-muted mb-2">
-            <a href="/" className="hover:text-text-primary transition-colors">Projects</a>
-            <span>/</span>
-            <span className="text-text-secondary">{project.name}</span>
-          </div>
+        <div className="border-b border-surface-border bg-white px-8 py-5 shrink-0">
           <div className="flex items-start gap-4">
             <div className="flex-1 space-y-2">
-              <input
-                className="input text-base font-semibold"
-                value={editName}
-                onChange={e => setEditName(e.target.value)}
-                placeholder="Project name"
-                autoFocus
-              />
-              <input
-                className="input text-sm"
-                value={editDescription}
-                onChange={e => setEditDescription(e.target.value)}
-                placeholder="Description (optional)"
-              />
+              <input className="input text-base font-semibold" value={editName} onChange={e => setEditName(e.target.value)} placeholder="Nome progetto" autoFocus />
+              <input className="input text-sm" value={editDescription} onChange={e => setEditDescription(e.target.value)} placeholder="Descrizione (opzionale)" />
             </div>
             <div className="flex items-center gap-2 pt-1">
-              <button className="btn-secondary text-sm py-1.5" onClick={() => setEditing(false)}>
-                <X size={14} /> Cancel
-              </button>
+              <button className="btn-secondary text-sm py-1.5" onClick={() => setEditing(false)}><X size={14} /> Annulla</button>
               <button className="btn-primary text-sm py-1.5" onClick={handleSaveEdit} disabled={saving || !editName.trim()}>
-                {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Salva
               </button>
             </div>
           </div>
@@ -185,175 +246,330 @@ export default function ProjectDetailPage() {
       ) : (
         <PageHeader
           title={project.name}
-          subtitle={project.description || 'No description'}
-          breadcrumbs={[{ label: 'Projects', href: '/' }, { label: project.name }]}
+          subtitle={project.description || 'Nessuna descrizione'}
+          breadcrumbs={[{ label: 'Progetti', href: '/' }, { label: project.name }]}
           actions={
-            <div className="flex items-center gap-2">
-              <button
-                className="btn-secondary text-sm"
-                onClick={startEditing}
-                title="Edit project details"
-              >
-                <Pencil size={14} /> Edit
-              </button>
-<button
-                className="btn-primary"
-                onClick={handleAnalyze}
-                disabled={hasRunningAnalysis || fileCount === 0}
-                title={fileCount === 0 ? 'Upload documents first' : ''}
-              >
-                {hasRunningAnalysis ? (
-                  <><Loader2 size={14} className="animate-spin" /> Analyzing…</>
-                ) : (
-                  <><Play size={14} /> Analyze Impacts</>
-                )}
-              </button>
-            </div>
+            <button className="btn-secondary text-sm" onClick={startEditing} title="Modifica progetto">
+              <Pencil size={14} /> Modifica
+            </button>
           }
         />
       )}
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left panel — Documents */}
-        <div className="w-80 xl:w-96 shrink-0 border-r border-surface-border overflow-y-auto bg-white">
-          <div className="p-5 border-b border-surface-border">
-            <div className="flex gap-1 bg-surface border border-surface-border rounded-lg p-0.5">
-              <button
-                onClick={() => setActiveSection('documents')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium transition-all ${activeSection === 'documents' ? 'bg-white shadow-sm text-text-primary' : 'text-text-muted'}`}
-              >
-                <FileText size={12} /> Documents
-                {fileCount > 0 && <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{fileCount}</span>}
-              </button>
-              <button
-                onClick={() => setActiveSection('analysis')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium transition-all ${activeSection === 'analysis' ? 'bg-white shadow-sm text-text-primary' : 'text-text-muted'}`}
-              >
-                <History size={12} /> Analyses
-                {project.analyses.length > 0 && <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{project.analyses.length}</span>}
-              </button>
-            </div>
-          </div>
-
-          {activeSection === 'documents' && (
-            <div className="p-5 space-y-6">
-              {(['as-is', 'to-be', 'business-rules'] as FileBucket[]).map(bucket => (
-                <div key={bucket}>
-                  <div className="mb-2">
-                    <span className={`badge ${bucket === 'as-is' ? 'badge-asis' : bucket === 'to-be' ? 'badge-tobe' : 'badge-br'} mb-2`}>
-                      {bucket === 'as-is' ? 'As-Is' : bucket === 'to-be' ? 'To-Be' : 'Business Rules'}
-                    </span>
-                  </div>
-                  <FileUploader projectId={project.id} bucket={bucket} onUploadComplete={load} />
-                </div>
-              ))}
-              <div className="pt-2">
-                <FileList files={project.files} projectId={project.id} onDeleted={load} />
-              </div>
-            </div>
+      {/* Top-level view switcher */}
+      <div className="flex shrink-0 border-b border-surface-border bg-white px-6 gap-1 pt-2">
+        <button
+          onClick={() => setActiveView('analysis')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-all -mb-px ${
+            activeView === 'analysis'
+              ? 'border-purple-deep text-purple-deep'
+              : 'border-transparent text-text-muted hover:text-text-primary'
+          }`}
+        >
+          <FileText size={14} />
+          Analisi
+        </button>
+        <button
+          onClick={() => setActiveView('uat')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-all -mb-px ${
+            activeView === 'uat'
+              ? 'border-purple-deep text-purple-deep'
+              : 'border-transparent text-text-muted hover:text-text-primary'
+          }`}
+        >
+          <BarChart2 size={14} />
+          Risk Analysis
+          {uatAnalyses.length > 0 && (
+            <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{uatAnalyses.length}</span>
           )}
+        </button>
+      </div>
 
-          {activeSection === 'analysis' && (
-            <div className="p-5 space-y-3">
-              {project.analyses.length === 0 ? (
-                <div className="text-center py-8">
-                  <p className="text-xs text-text-muted mb-3">No analyses yet.</p>
+      <div className="flex flex-1 overflow-hidden">
+        {/* ── ANALISI VIEW ── */}
+        {activeView === 'analysis' && (
+          <>
+            {/* Left panel */}
+            <div className="w-80 xl:w-96 shrink-0 border-r border-surface-border overflow-y-auto bg-white flex flex-col">
+              {/* Sub-tabs + run button */}
+              <div className="p-4 border-b border-surface-border space-y-3 shrink-0">
+                <div className="flex gap-1 bg-surface border border-surface-border rounded-lg p-0.5">
                   <button
-                    onClick={handleAnalyze}
-                    className="btn-primary text-xs"
-                    disabled={fileCount === 0}
+                    onClick={() => setAnalysisPanel('documents')}
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium transition-all ${analysisPanel === 'documents' ? 'bg-white shadow-sm text-text-primary' : 'text-text-muted'}`}
                   >
-                    <Play size={12} /> Run first analysis
+                    <FileText size={12} /> Documenti
+                    {fileCount > 0 && <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{fileCount}</span>}
+                  </button>
+                  <button
+                    onClick={() => setAnalysisPanel('history')}
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium transition-all ${analysisPanel === 'history' ? 'bg-white shadow-sm text-text-primary' : 'text-text-muted'}`}
+                  >
+                    <History size={12} /> Analisi
+                    {project.analyses.length > 0 && <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{project.analyses.length}</span>}
                   </button>
                 </div>
-              ) : (
-                project.analyses.map((analysis: Analysis) => {
-                  const isSelected = selectedAnalysis?.id === analysis.id;
-                  return (
-                    <div
-                      key={analysis.id}
-                      onClick={() => { setSelectedAnalysis(analysis); }}
-                      className={`p-3 rounded-xl border cursor-pointer transition-all ${
-                        isSelected
-                          ? 'border-purple-deep bg-brand-50'
-                          : 'border-surface-border bg-white hover:border-brand-200'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-semibold text-text-primary">{analysis.version_name}</span>
-                        <div className="flex items-center gap-1">
-                          {analysis.status === 'done' && <CheckCircle2 size={13} className="text-emerald-500" />}
-                          {analysis.status === 'running' && <Loader2 size={13} className="animate-spin text-amber-500" />}
-                          {analysis.status === 'error' && <AlertCircle size={13} className="text-red-500" />}
-                          <button
-                            onClick={e => { e.stopPropagation(); handleDeleteAnalysis(analysis.id); }}
-                            className="text-text-muted hover:text-red-500 transition-colors ml-1"
-                          >
-                            <Trash2 size={11} />
-                          </button>
-                        </div>
+                <button
+                  className="btn-primary w-full text-sm"
+                  onClick={handleAnalyze}
+                  disabled={hasRunningAnalysis || fileCount === 0}
+                  title={fileCount === 0 ? 'Carica prima i documenti' : ''}
+                >
+                  {hasRunningAnalysis
+                    ? <><Loader2 size={14} className="animate-spin" /> Analisi in corso…</>
+                    : <><Play size={14} /> Analizza Impatti</>}
+                </button>
+              </div>
+
+              {/* Documents panel */}
+              {analysisPanel === 'documents' && (
+                <div className="p-5 space-y-6 flex-1 overflow-y-auto">
+                  {(['as-is', 'to-be', 'business-rules'] as FileBucket[]).map(bucket => (
+                    <div key={bucket}>
+                      <div className="mb-2">
+                        <span className={`badge ${bucket === 'as-is' ? 'badge-asis' : bucket === 'to-be' ? 'badge-tobe' : 'badge-br'} mb-2`}>
+                          {bucket === 'as-is' ? 'As-Is' : bucket === 'to-be' ? 'To-Be' : 'Business Rules'}
+                        </span>
                       </div>
-                      <div className="flex items-center gap-1 text-[10px] text-text-muted">
-                        <Clock size={9} />
-                        {formatDate(analysis.created_at)}
+                      <FileUploader
+                        projectId={project.id}
+                        bucket={bucket}
+                        onUploadComplete={() => { load(); filesApi.indexStatus(project.id).then(setIndexStatus).catch(() => {}); }}
+                      />
+                    </div>
+                  ))}
+                  <div className="pt-2">
+                    <FileList files={project.files} projectId={project.id} onDeleted={load} />
+                  </div>
+
+                  {/* RAG index status */}
+                  {indexStatus && indexStatus.total > 0 && (
+                    <div className={`rounded-xl border p-3 flex items-center gap-3 text-xs ${indexStatus.pending === 0 ? 'border-emerald-100 bg-emerald-50/60' : 'border-amber-100 bg-amber-50/60'}`}>
+                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${indexStatus.pending === 0 ? 'bg-emerald-500' : 'bg-amber-500'}`}>
+                        {reindexing
+                          ? <Loader2 size={13} className="animate-spin text-white" />
+                          : indexStatus.pending === 0
+                          ? <CheckCircle2 size={13} className="text-white" />
+                          : <Database size={13} className="text-white" />}
                       </div>
-                      {analysis.status === 'error' && analysis.error_message && (
-                        <p className="text-[10px] text-red-500 mt-1 truncate">{analysis.error_message}</p>
-                      )}
-                      {analysis.input_summary && (
-                        <p className="text-[10px] text-text-muted mt-1 truncate">{analysis.input_summary}</p>
+                      <div className="flex-1 min-w-0">
+                        {indexStatus.pending === 0 ? (
+                          <p className="text-emerald-700 font-medium">{indexStatus.indexed}/{indexStatus.total} file indicizzati</p>
+                        ) : (
+                          <>
+                            <p className="text-amber-700 font-medium">{reindexing ? 'Indicizzazione…' : `${indexStatus.pending} file non ancora indicizzati`}</p>
+                            <p className="text-amber-600 mt-0.5">{indexStatus.indexed}/{indexStatus.total} pronti per RAG</p>
+                          </>
+                        )}
+                      </div>
+                      {indexStatus.pending > 0 && !reindexing && (
+                        <button onClick={handleReindex} className="btn-secondary text-xs py-1 px-2 shrink-0">
+                          <RefreshCw size={11} /> Indicizza
+                        </button>
                       )}
                     </div>
-                  );
-                })
+                  )}
+                </div>
+              )}
+
+              {/* Analysis history panel */}
+              {analysisPanel === 'history' && (
+                <div className="p-5 space-y-3 flex-1 overflow-y-auto">
+                  {project.analyses.length === 0 ? (
+                    <div className="text-center py-8">
+                      <p className="text-xs text-text-muted mb-3">Nessuna analisi ancora.</p>
+                      <button onClick={handleAnalyze} className="btn-primary text-xs" disabled={fileCount === 0}>
+                        <Play size={12} /> Prima analisi
+                      </button>
+                    </div>
+                  ) : (
+                    project.analyses.map((analysis: Analysis) => {
+                      const isSelected = selectedAnalysis?.id === analysis.id;
+                      return (
+                        <div
+                          key={analysis.id}
+                          onClick={() => setSelectedAnalysis(analysis)}
+                          className={`p-3 rounded-xl border cursor-pointer transition-all ${isSelected ? 'border-purple-deep bg-brand-50' : 'border-surface-border bg-white hover:border-brand-200'}`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-semibold text-text-primary">{analysis.version_name}</span>
+                            <div className="flex items-center gap-1">
+                              {analysis.status === 'done' && <CheckCircle2 size={13} className="text-emerald-500" />}
+                              {analysis.status === 'running' && <Loader2 size={13} className="animate-spin text-amber-500" />}
+                              {analysis.status === 'error' && <AlertCircle size={13} className="text-red-500" />}
+                              <button onClick={e => { e.stopPropagation(); handleDeleteAnalysis(analysis.id); }} className="text-text-muted hover:text-red-500 transition-colors ml-1">
+                                <Trash2 size={11} />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 text-[10px] text-text-muted">
+                            <Clock size={9} /> {formatDate(analysis.created_at)}
+                          </div>
+                          {analysis.status === 'running' && analysis.progress_step && (
+                            <p className="text-[10px] text-amber-600 mt-1 truncate">{analysis.progress_step}</p>
+                          )}
+                          {analysis.status === 'error' && analysis.error_message && (
+                            <p className="text-[10px] text-red-500 mt-1 truncate">{analysis.error_message}</p>
+                          )}
+                          {analysis.input_summary && (
+                            <p className="text-[10px] text-text-muted mt-1 truncate">{analysis.input_summary}</p>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
               )}
             </div>
-          )}
-        </div>
 
-        {/* Right panel — Analysis result */}
-        <div className="flex-1 overflow-hidden flex flex-col">
-          {hasRunningAnalysis && !analysisResult && (
-            <div className="flex-1 flex flex-col items-center justify-center gap-4 text-text-muted animate-fade-in">
-              <div className="w-16 h-16 rounded-2xl bg-brand-50 flex items-center justify-center">
-                <Loader2 size={26} className="animate-spin text-purple-deep" />
-              </div>
-              <div className="text-center">
-                <p className="text-sm font-medium text-text-primary">Analyzing your documentation…</p>
-                <p className="text-xs text-text-muted mt-1">Claude is processing your files. This may take up to 2 minutes.</p>
+            {/* Right panel — analysis result */}
+            <div className="flex-1 overflow-hidden flex flex-col">
+              {hasRunningAnalysis && !analysisResult && (() => {
+                const running = project.analyses.find((a: Analysis) => a.status === 'running');
+                return <AnalysisProgress progressStep={running?.progress_step ?? null} />;
+              })()}
+
+              {!hasRunningAnalysis && !selectedAnalysis && (
+                <div className="flex-1 flex flex-col items-center justify-center gap-4 text-text-muted">
+                  <div className="w-16 h-16 rounded-2xl bg-surface border-2 border-dashed border-surface-border flex items-center justify-center">
+                    <Play size={22} className="text-text-muted" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-medium text-text-primary">Pronto per l'analisi</p>
+                    <p className="text-xs text-text-muted mt-1 max-w-xs">Carica i documenti as-is e to-be, poi clicca <strong>Analizza Impatti</strong>.</p>
+                  </div>
+                </div>
+              )}
+
+              {selectedAnalysis?.status === 'error' && (
+                <div className="flex-1 flex flex-col items-center justify-center gap-3">
+                  <AlertCircle size={28} className="text-red-400" />
+                  <p className="text-sm font-medium text-text-primary">Analisi fallita</p>
+                  <p className="text-xs text-text-muted max-w-sm text-center">{selectedAnalysis.error_message}</p>
+                  <button className="btn-secondary text-xs mt-2" onClick={handleAnalyze}><RefreshCw size={12} /> Riprova</button>
+                </div>
+              )}
+
+              {analysisResult && (
+                <AnalysisTabs result={analysisResult} projectId={id!} analysisId={selectedAnalysis!.id} />
+              )}
+            </div>
+          </>
+        )}
+
+        {/* ── RISK ANALYSIS VIEW ── */}
+        {activeView === 'uat' && (
+          <>
+            {/* Left panel */}
+            <div className="w-80 xl:w-96 shrink-0 border-r border-surface-border overflow-y-auto bg-white">
+              <div className="p-5 space-y-4">
+                <div>
+                  <p className="text-xs font-semibold text-text-primary mb-2">Carica Export ALM</p>
+                  <label className={`flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 border-dashed transition-colors cursor-pointer ${uatUploading ? 'border-brand-200 bg-brand-50' : 'border-surface-border hover:border-brand-200 hover:bg-surface'}`}>
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls,.csv"
+                      className="hidden"
+                      disabled={uatUploading || isUATRunning}
+                      onChange={e => { const f = e.target.files?.[0]; if (f) handleUATUpload(f); e.target.value = ''; }}
+                    />
+                    {uatUploading || isUATRunning
+                      ? <Loader2 size={18} className="animate-spin text-purple-deep" />
+                      : <Upload size={18} className="text-text-muted" />}
+                    <span className="text-xs text-text-muted text-center">
+                      {uatUploading ? 'Caricamento…' : isUATRunning ? 'Analisi in corso…' : 'Trascina un file ALM Excel / CSV oppure clicca'}
+                    </span>
+                  </label>
+                </div>
+
+                {uatAnalyses.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-text-primary">Storico</p>
+                    {uatAnalyses.map((ua: UATAnalysis) => {
+                      const isSelected = selectedUAT?.id === ua.id;
+                      return (
+                        <div
+                          key={ua.id}
+                          onClick={() => setSelectedUAT(ua)}
+                          className={`p-3 rounded-xl border cursor-pointer transition-all ${isSelected ? 'border-purple-deep bg-brand-50' : 'border-surface-border bg-white hover:border-brand-200'}`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-semibold text-text-primary">{ua.version_name}</span>
+                            <div className="flex items-center gap-1">
+                              {ua.status === 'done' && <CheckCircle2 size={13} className="text-emerald-500" />}
+                              {ua.status === 'running' && <Loader2 size={13} className="animate-spin text-amber-500" />}
+                              {ua.status === 'error' && <AlertCircle size={13} className="text-red-500" />}
+                              <button onClick={e => { e.stopPropagation(); handleDeleteUAT(ua.id); }} className="text-text-muted hover:text-red-500 transition-colors ml-1">
+                                <Trash2 size={11} />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 text-[10px] text-text-muted">
+                            <Clock size={9} /> {formatDate(ua.created_at)}
+                          </div>
+                          {ua.defect_count != null && (
+                            <p className="text-[10px] text-text-muted mt-0.5">{ua.defect_count} defect · {ua.file_name}</p>
+                          )}
+                          {ua.status === 'running' && ua.progress_step && (
+                            <p className="text-[10px] text-amber-600 mt-1 truncate">{ua.progress_step}</p>
+                          )}
+                          {ua.status === 'error' && ua.error_message && (
+                            <p className="text-[10px] text-red-500 mt-1 truncate">{ua.error_message}</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
-          )}
 
-          {!hasRunningAnalysis && !selectedAnalysis && (
-            <div className="flex-1 flex flex-col items-center justify-center gap-4 text-text-muted">
-              <div className="w-16 h-16 rounded-2xl bg-surface border-2 border-dashed border-surface-border flex items-center justify-center">
-                <Play size={22} className="text-text-muted" />
-              </div>
-              <div className="text-center">
-                <p className="text-sm font-medium text-text-primary">Ready to analyze</p>
-                <p className="text-xs text-text-muted mt-1 max-w-xs">
-                  Upload your as-is and to-be documents, then click <strong>Analyze Impacts</strong> to get started.
-                </p>
-              </div>
+            {/* Right panel — UAT dashboard */}
+            <div className="flex-1 overflow-hidden flex flex-col">
+              {isUATRunning && (
+                <div className="flex-1 flex flex-col items-center justify-center gap-4">
+                  <div className="w-16 h-16 rounded-2xl bg-brand-50 border border-brand-200 flex items-center justify-center">
+                    <Loader2 size={26} className="animate-spin text-purple-deep" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-medium text-text-primary">Analisi dei defect in corso…</p>
+                    {(() => {
+                      const running = uatAnalyses.find((a: UATAnalysis) => a.status === 'running');
+                      return running?.progress_step
+                        ? <p className="text-xs text-amber-600 mt-1">{running.progress_step}</p>
+                        : <p className="text-xs text-text-muted mt-1">Avvio…</p>;
+                    })()}
+                  </div>
+                </div>
+              )}
+
+              {!isUATRunning && !selectedUAT && (
+                <div className="flex-1 flex flex-col items-center justify-center gap-4 text-text-muted">
+                  <div className="w-16 h-16 rounded-2xl bg-surface border-2 border-dashed border-surface-border flex items-center justify-center">
+                    <ShieldAlert size={22} className="text-text-muted" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-medium text-text-primary">Risk Analysis</p>
+                    <p className="text-xs text-text-muted mt-1 max-w-xs">Carica un export ALM dei difetti (Excel o CSV) per generare la dashboard di rischio.</p>
+                  </div>
+                </div>
+              )}
+
+              {!isUATRunning && selectedUAT?.status === 'error' && (
+                <div className="flex-1 flex flex-col items-center justify-center gap-3">
+                  <AlertCircle size={28} className="text-red-400" />
+                  <p className="text-sm font-medium text-text-primary">Analisi fallita</p>
+                  <p className="text-xs text-text-muted max-w-sm text-center">{selectedUAT.error_message}</p>
+                </div>
+              )}
+
+              {!isUATRunning && selectedUAT && (() => {
+                const result = parseUATResult(selectedUAT);
+                return result ? <UATDashboard result={result} fileName={selectedUAT.file_name} /> : null;
+              })()}
             </div>
-          )}
-
-          {selectedAnalysis?.status === 'error' && (
-            <div className="flex-1 flex flex-col items-center justify-center gap-3">
-              <AlertCircle size={28} className="text-red-400" />
-              <p className="text-sm font-medium text-text-primary">Analysis failed</p>
-              <p className="text-xs text-text-muted max-w-sm text-center">{selectedAnalysis.error_message}</p>
-              <button className="btn-secondary text-xs mt-2" onClick={handleAnalyze}>
-                <RefreshCw size={12} /> Retry Analysis
-              </button>
-            </div>
-          )}
-
-          {analysisResult && (
-            <AnalysisTabs result={analysisResult} projectId={id!} analysisId={selectedAnalysis!.id} />
-          )}
-        </div>
+          </>
+        )}
       </div>
     </div>
   );

@@ -48,6 +48,7 @@ db.exec(`
     input_summary TEXT,
     result_json TEXT,
     error_message TEXT,
+    progress_step TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
   );
@@ -73,7 +74,66 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS impact_feedback (
+    id TEXT PRIMARY KEY,
+    analysis_id TEXT NOT NULL,
+    impact_id TEXT NOT NULL,
+    sentiment TEXT NOT NULL CHECK(sentiment IN ('positive', 'negative')),
+    motivation TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE,
+    UNIQUE(analysis_id, impact_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS file_chunks (
+    id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    bucket TEXT NOT NULL,
+    section_path TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL,
+    word_count INTEGER NOT NULL DEFAULT 0,
+    embedding BLOB,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_file_chunks_project_bucket
+    ON file_chunks(project_id, bucket);
+
+  CREATE TABLE IF NOT EXISTS uat_analyses (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    version_name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    file_name TEXT,
+    defect_count INTEGER,
+    result_json TEXT,
+    error_message TEXT,
+    progress_step TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS open_question_feedback (
+    id TEXT PRIMARY KEY,
+    analysis_id TEXT NOT NULL,
+    question_text TEXT NOT NULL,
+    sentiment TEXT CHECK(sentiment IN ('positive', 'negative')),
+    answer TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE,
+    UNIQUE(analysis_id, question_text)
+  );
 `);
+
+// --- Migration: add progress_step to analyses if missing ---
+const analysesCols = db.prepare("PRAGMA table_info(analyses)").all() as { name: string }[];
+if (analysesCols.length > 0 && !analysesCols.find(c => c.name === 'progress_step')) {
+  console.log('[DB] Adding progress_step column to analyses...');
+  db.exec('ALTER TABLE analyses ADD COLUMN progress_step TEXT');
+}
 
 // --- Migration: recreate impact_prototypes if it uses old 'html' column ---
 const cols = db.prepare("PRAGMA table_info(impact_prototypes)").all() as { name: string }[];

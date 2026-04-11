@@ -19,6 +19,7 @@
     "pdf-parse": "^1.1.1",
     "puppeteer": "^24.40.0",
     "uuid": "^11.1.0",
+    "voyageai": "^0.2.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

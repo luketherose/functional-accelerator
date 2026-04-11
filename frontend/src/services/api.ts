@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage } from '../types';
+import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -44,6 +44,12 @@ export const filesApi = {
 
   previewUrl: (projectId: string, fileId: string) =>
     `${BASE_URL}/api/files/${projectId}/${fileId}/preview`,
+
+  indexStatus: (projectId: string) =>
+    api.get<{ total: number; indexed: number; pending: number }>(`/api/files/${projectId}/index-status`).then(r => r.data),
+
+  reindex: (projectId: string) =>
+    api.post<{ message: string; total: number }>(`/api/files/${projectId}/reindex`).then(r => r.data),
 };
 
 // --- Analysis ---
@@ -66,6 +72,36 @@ export const analysisApi = {
     api.get<{ id: string; impact_id: string; image_data: string; created_at: string }>(
       `/api/analysis/${projectId}/${analysisId}/impact-prototype/${encodeURIComponent(impactId)}`
     ).then(r => r.data),
+
+  listFeedback: (projectId: string, analysisId: string) =>
+    api.get<ImpactFeedback[]>(`/api/analysis/${projectId}/${analysisId}/feedback`).then(r => r.data),
+
+  saveFeedback: (
+    projectId: string,
+    analysisId: string,
+    impactId: string,
+    sentiment: 'positive' | 'negative',
+    motivation?: string
+  ) =>
+    api.post<ImpactFeedback>(`/api/analysis/${projectId}/${analysisId}/feedback`, { impactId, sentiment, motivation }).then(r => r.data),
+
+  deleteFeedback: (projectId: string, analysisId: string, impactId: string) =>
+    api.delete(`/api/analysis/${projectId}/${analysisId}/feedback/${encodeURIComponent(impactId)}`).then(r => r.data),
+
+  listOQFeedback: (projectId: string, analysisId: string) =>
+    api.get<OpenQuestionFeedback[]>(`/api/analysis/${projectId}/${analysisId}/open-question-feedback`).then(r => r.data),
+
+  saveOQFeedback: (
+    projectId: string,
+    analysisId: string,
+    questionText: string,
+    sentiment: 'positive' | 'negative' | null,
+    answer?: string | null
+  ) =>
+    api.post<OpenQuestionFeedback>(`/api/analysis/${projectId}/${analysisId}/open-question-feedback`, { questionText, sentiment, answer }).then(r => r.data),
+
+  deleteOQFeedback: (projectId: string, analysisId: string, questionText: string) =>
+    api.delete(`/api/analysis/${projectId}/${analysisId}/open-question-feedback`, { data: { questionText } }).then(r => r.data),
 
   impactDeepDive: (
     projectId: string,
@@ -126,6 +162,33 @@ export const riskApi = {
   delete: (projectId: string, assessmentId: string) =>
     api.delete(`/api/risk/${projectId}/${assessmentId}`).then(r => r.data),
 };
+
+// --- UAT Risk Analysis ---
+export const uatApi = {
+  list: (projectId: string) =>
+    api.get<UATAnalysis[]>(`/api/uat/${projectId}`).then(r => r.data),
+
+  get: (projectId: string, analysisId: string) =>
+    api.get<UATAnalysis>(`/api/uat/${projectId}/${analysisId}`).then(r => r.data),
+
+  run: (projectId: string, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post<{ analysisId: string; versionName: string; status: string; defectCount: number }>(
+      `/api/uat/${projectId}/run`,
+      form,
+      { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 30_000 }
+    ).then(r => r.data);
+  },
+
+  delete: (projectId: string, analysisId: string) =>
+    api.delete(`/api/uat/${projectId}/${analysisId}`).then(r => r.data),
+};
+
+export function parseUATResult(analysis: UATAnalysis): UATAnalysisResult | null {
+  if (!analysis.result_json) return null;
+  try { return JSON.parse(analysis.result_json) as UATAnalysisResult; } catch { return null; }
+}
 
 // Helper to parse result_json from an analysis record
 export function parseAnalysisResult(analysis: Analysis): AnalysisResult | null {
