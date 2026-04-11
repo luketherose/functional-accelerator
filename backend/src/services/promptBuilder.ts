@@ -219,27 +219,49 @@ Reproduce the FULL screen as an HTML page, applying the described change. Then v
 
 /**
  * Builds the system prompt for a per-impact deep-dive conversation.
- * All project files are embedded as context so Claude can cite exact passages.
+ *
+ * When `retrievedContext` is provided (RAG mode), its pre-retrieved chunks are used
+ * as the documentation context instead of dumping full file texts.
+ * Falls back to full file texts when no indexed chunks exist (legacy mode).
  */
 export function buildDeepDiveSystemPrompt(
   project: { name: string; description: string },
-  files: ProjectFile[],
-  impact: { area: string; description: string }
+  impact: { area: string; description: string },
+  retrievedContext?: { asis: string; tobe: string; br: string },
+  files?: ProjectFile[]
 ): string {
-  const asisFiles = files.filter(f => f.bucket === 'as-is');
-  const tobeFiles = files.filter(f => f.bucket === 'to-be');
-  const brFiles = files.filter(f => f.bucket === 'business-rules');
+  let documentationBlock: string;
 
-  const formatFiles = (fileList: ProjectFile[], title: string): string => {
-    if (fileList.length === 0) return `### ${title}\n_No documents uploaded._\n`;
-    return `### ${title}\n` + fileList.map(f =>
-      f.extracted_text
-        ? `\n**${f.original_name}**\n\`\`\`\n${f.extracted_text.slice(0, 30_000)}\n\`\`\``
-        : `\n**${f.original_name}** (${f.mime_type}) — [no extractable text]`
-    ).join('\n\n');
-  };
+  if (retrievedContext) {
+    // RAG mode: use pre-retrieved, impact-focused chunks
+    documentationBlock = `## AS-IS — Relevant Passages
 
-  const brSection = brFiles.length > 0 ? `\n${formatFiles(brFiles, 'Business Rules')}` : '';
+${retrievedContext.asis}
+
+## TO-BE — Relevant Passages
+
+${retrievedContext.tobe}${retrievedContext.br ? `\n\n## Business Rules — Relevant Passages\n\n${retrievedContext.br}` : ''}`;
+  } else {
+    // Fallback: full file texts (legacy, no indexed chunks)
+    const asisFiles = (files ?? []).filter(f => f.bucket === 'as-is');
+    const tobeFiles = (files ?? []).filter(f => f.bucket === 'to-be');
+    const brFiles = (files ?? []).filter(f => f.bucket === 'business-rules');
+
+    const formatFiles = (fileList: ProjectFile[], title: string): string => {
+      if (fileList.length === 0) return `### ${title}\n_No documents uploaded._\n`;
+      return `### ${title}\n` + fileList.map(f =>
+        f.extracted_text
+          ? `\n**${f.original_name}**\n\`\`\`\n${f.extracted_text.slice(0, 30_000)}\n\`\`\``
+          : `\n**${f.original_name}** (${f.mime_type}) — [no extractable text]`
+      ).join('\n\n');
+    };
+
+    const brSection = brFiles.length > 0 ? `\n${formatFiles(brFiles, 'Business Rules')}` : '';
+
+    documentationBlock = `${formatFiles(asisFiles, 'AS-IS Documentation (Current State)')}
+
+${formatFiles(tobeFiles, 'TO-BE Documentation (Target Requirements)')}${brSection}`;
+  }
 
   return `You are an expert functional analyst for the project "${project.name}".${project.description ? `\nProject context: ${project.description}` : ''}
 
@@ -252,14 +274,11 @@ You are in a focused deep-dive session on ONE specific impact:
 
 ⚠️ STRICT SCOPE RULE: Every answer you give MUST be limited exclusively to this impact area ("${impact.area}"). Do not discuss, reference, or expand into other functional areas, screens, or topics — even if they appear in the documentation. If the user's question drifts outside this scope, acknowledge it briefly and redirect back to "${impact.area}".
 
-When reading the documents below, extract and reason ONLY about the sections, paragraphs, rules, and data fields that are directly relevant to "${impact.area}". Ignore everything else.
+The documentation passages below have already been filtered to be relevant to "${impact.area}". Focus your analysis on these passages.
 
 ## PROJECT DOCUMENTATION
 
-${formatFiles(asisFiles, 'AS-IS Documentation (Current State)')}
-
-${formatFiles(tobeFiles, 'TO-BE Documentation (Target Requirements)')}
-${brSection}
+${documentationBlock}
 
 ## ANSWER GUIDELINES
 - Cite the exact paragraph or passage from the documentation when possible (include the section title or page reference if available)
@@ -304,7 +323,15 @@ STRICT COMPARISON RULES:
 - If an area appears in both AS-IS and TO-BE with no documented difference, use "UNCHANGED"
 - PREFER OMISSION OVER SPECULATION: it is better to miss a change than to invent one
 - Quote exact passages from the source documents (verbatim or very close) for every piece of evidence
-- Return ONLY raw JSON — no prose, no markdown fences`;
+- Return ONLY raw JSON — no prose, no markdown fences
+
+CATEGORY ASSIGNMENT GUIDE:
+- "functional": business logic, rules, calculations, data processing, workflows
+- "uiux": any change that affects a screen, form, field label, validation message, user flow step, button, table column, or page layout — even if the root cause is functional. If a functional change requires the user to interact differently with a screen, ALSO create a separate uiux-categorized delta for that screen interaction.
+- "screen": new or removed screens / pages
+- "businessRule": explicit constraints, thresholds, decision rules
+- "integration": API, external system, data exchange changes
+You MUST produce at least one delta with category "uiux" whenever the TO-BE documentation describes or implies changes to user-facing screens, forms, or workflows.`;
 
 const SYNTHESIS_SYSTEM = `You are a functional analysis report generator.
 You receive a list of verified functional deltas (with evidence) and must convert them into a structured analysis report.
@@ -315,7 +342,16 @@ RULES:
 - UNCERTAIN deltas must appear in openQuestions, not in functional/UI impacts
 - Keep descriptions concise (2-3 sentences max per item)
 - businessRulesExtracted should include explicit rules from the TO-BE documentation
-- Return ONLY raw JSON — no prose, no markdown fences`;
+- Return ONLY raw JSON — no prose, no markdown fences
+
+MANDATORY UI/UX RULE:
+uiUxImpacts MUST contain at least 2 entries — always, with no exceptions.
+If fewer than 2 deltas are tagged category="uiux", you MUST derive additional UI/UX impacts by reasoning about the screen-level consequences of the functional deltas:
+- Which forms, fields, labels, or validation messages must change?
+- Which user flows or navigation steps are affected?
+- Which table columns, filters, or display formats must be updated?
+- Are there new screens, modals, or confirmation dialogs required?
+Use the functional deltas as input and describe the concrete UI/UX change a user would notice. Each uiUxImpacts entry must describe the AS-IS screen state vs the TO-BE screen state.`;
 
 /**
  * System prompt for the AS-IS or TO-BE extraction step.
@@ -429,6 +465,12 @@ export function buildSynthesisSystemPrompt(): string {
   return SYNTHESIS_SYSTEM;
 }
 
+export interface OQAnswer {
+  question_text: string;
+  sentiment: 'positive' | 'negative' | null;
+  answer: string | null;
+}
+
 /**
  * User prompt to synthesize verified deltas into the final AnalysisResult schema.
  */
@@ -436,7 +478,8 @@ export function buildSynthesisUserPrompt(
   project: { name: string; description: string },
   deltas: Delta[],
   coverageWarning: string | null,
-  prevFeedback: ImpactFeedback[] = []
+  prevFeedback: ImpactFeedback[] = [],
+  prevOQAnswers: OQAnswer[] = []
 ): string {
   const feedbackSection = prevFeedback.length > 0 ? `
 --- FEEDBACK FROM PREVIOUS ANALYSIS ---
@@ -447,16 +490,30 @@ ${prevFeedback.map(f => {
   }).join('\n')}
 ` : '';
 
+  const answeredQuestions = prevOQAnswers.filter(q => q.answer?.trim() || q.sentiment === 'negative');
+  const oqSection = answeredQuestions.length > 0 ? `
+--- OPEN QUESTIONS FROM PREVIOUS RUN — REVIEWER RESPONSES ---
+${answeredQuestions.map(q => {
+    if (q.sentiment === 'negative') return `- DISMISSED (no longer relevant): "${q.question_text}"`;
+    const ans = q.answer?.trim() ? `\n  Reviewer answer: "${q.answer.trim()}"` : '';
+    return `- ANSWERED: "${q.question_text}"${ans}`;
+  }).join('\n')}
+
+Rules for open questions:
+- Do NOT re-raise questions marked DISMISSED.
+- For ANSWERED questions: incorporate the answer into your analysis. Only keep them in openQuestions if still genuinely unresolved after considering the answer.
+` : '';
+
   const coverageNote = coverageWarning
     ? `\n⚠️ Coverage warning: ${coverageWarning}\nInclude this warning in the executiveSummary and as an openQuestion.\n`
     : '';
 
   return `Convert the verified functional deltas below into the final analysis report for project "${project.name}".
 ${project.description ? `Project context: ${project.description}\n` : ''}
-${feedbackSection}${coverageNote}
+${feedbackSection}${oqSection}${coverageNote}
 Rules:
 - functionalImpacts: include deltas with category "functional" and changeType MODIFIED/ADDED/REMOVED
-- uiUxImpacts: include deltas with category "uiux" and changeType MODIFIED/ADDED/REMOVED
+- uiUxImpacts: MANDATORY — include deltas with category "uiux". If fewer than 2 are available, derive additional entries from the functional deltas by describing the screen-level change the user would see (form fields, labels, validation messages, table columns, navigation flows). This array MUST have at least 2 entries.
 - affectedScreens: derive from deltas with category "screen" or "uiux"
 - businessRulesExtracted: include all business rules from MODIFIED/ADDED deltas (source = "to-be" or "provided")
 - proposedChanges: one actionable change per significant delta

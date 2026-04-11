@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, AlertCircle, TrendingUp, Shield, Zap, ChevronDown, ChevronUp } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, AlertCircle, TrendingUp, Shield, Zap, ChevronDown, ChevronUp, ChevronLeft } from 'lucide-react';
 import { useState } from 'react';
 import type { UATAnalysisResult, UATApplicationStat } from '../types';
 
@@ -26,6 +26,172 @@ const RISK_BADGE: Record<string, string> = {
 const EFFORT_LABEL: Record<string, string> = {
   low: 'Quick win', medium: 'Medium effort', high: 'High effort',
 };
+
+// ─── WAW Pie chart helpers ─────────────────────────────────────────────────────
+
+const WAW_COLORS = ['#7c3aed','#2563eb','#dc2626','#d97706','#059669','#db2777','#0891b2','#65a30d','#9333ea','#ea580c'];
+const PRIORITY_PIE: Record<string, string> = {
+  Critical: '#ef4444', High: '#fb923c', Medium: '#fbbf24', Low: '#4ade80',
+};
+
+function polarXY(cx: number, cy: number, r: number, deg: number) {
+  const rad = (deg - 90) * Math.PI / 180;
+  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+}
+
+function sectorPath(cx: number, cy: number, r: number, ir: number, startDeg: number, endDeg: number): string {
+  const span = Math.min(endDeg - startDeg, 359.99);
+  const end = startDeg + span;
+  const s1 = polarXY(cx, cy, r, startDeg);
+  const e1 = polarXY(cx, cy, r, end);
+  const s2 = polarXY(cx, cy, ir, end);
+  const e2 = polarXY(cx, cy, ir, startDeg);
+  const lg = span > 180 ? 1 : 0;
+  return `M ${s1.x} ${s1.y} A ${r} ${r} 0 ${lg} 1 ${e1.x} ${e1.y} L ${s2.x} ${s2.y} A ${ir} ${ir} 0 ${lg} 0 ${e2.x} ${e2.y} Z`;
+}
+
+interface WawSlice { label: string; value: number; color: string }
+
+function WawDrillDown({ result }: { result: UATAnalysisResult }) {
+  const [drillApp, setDrillApp] = useState<string | null>(null);
+  const [hovered, setHovered] = useState<number | null>(null);
+  const CX = 110, CY = 110, R = 88, IR = 48;
+
+  const topSlices: WawSlice[] = result.byApplication.map((s, i) => ({
+    label: s.application,
+    value: s.riskScore || s.total,
+    color: WAW_COLORS[i % WAW_COLORS.length],
+  })).filter(s => s.value > 0);
+
+  const drillStat = drillApp ? result.byApplication.find(a => a.application === drillApp) : null;
+  const drillSlices: WawSlice[] = drillStat
+    ? ([
+        { label: 'Critical', value: drillStat.critical, color: PRIORITY_PIE.Critical },
+        { label: 'High',     value: drillStat.high,     color: PRIORITY_PIE.High },
+        { label: 'Medium',   value: drillStat.medium,   color: PRIORITY_PIE.Medium },
+        { label: 'Low',      value: drillStat.low,      color: PRIORITY_PIE.Low },
+      ] as WawSlice[]).filter(s => s.value > 0)
+    : [];
+
+  const slices = drillApp ? drillSlices : topSlices;
+  const total  = slices.reduce((s, x) => s + x.value, 0) || 1;
+
+  let cursor = 0;
+  const arcs = slices.map((s, i) => {
+    const start = cursor;
+    const end   = cursor + (s.value / total) * 360;
+    cursor = end;
+    const mid = (start + end) / 2;
+    const explode = polarXY(0, 0, 7, mid);
+    return { ...s, i, start, end, pct: s.value / total, explode };
+  });
+
+  return (
+    <div className="card p-5">
+      {/* Header */}
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-semibold text-text-primary flex items-center gap-1.5">
+            Effetto WAW
+          </h3>
+          <p className="text-xs text-text-muted mt-0.5">
+            {drillApp
+              ? `Distribuzione priorità — ${drillApp}`
+              : 'Concentrazione del rischio per applicazione · click per drill-down'}
+          </p>
+        </div>
+        {drillApp && (
+          <button
+            onClick={() => { setDrillApp(null); setHovered(null); }}
+            className="flex items-center gap-1 text-xs text-purple-deep hover:underline shrink-0"
+          >
+            <ChevronLeft size={12} /> Tutte le app
+          </button>
+        )}
+      </div>
+
+      <div className="flex flex-col sm:flex-row items-center gap-6">
+        {/* SVG donut */}
+        <svg width={220} height={220} viewBox="0 0 220 220" className="shrink-0">
+          {arcs.map(arc => (
+            <path
+              key={arc.label}
+              d={sectorPath(CX, CY, R, IR, arc.start, arc.end)}
+              fill={arc.color}
+              stroke="white"
+              strokeWidth={2}
+              opacity={hovered === null || hovered === arc.i ? 1 : 0.45}
+              style={{ cursor: drillApp ? 'default' : 'pointer', transition: 'opacity 0.15s, transform 0.15s' }}
+              transform={hovered === arc.i ? `translate(${arc.explode.x}, ${arc.explode.y})` : ''}
+              onMouseEnter={() => setHovered(arc.i)}
+              onMouseLeave={() => setHovered(null)}
+              onClick={() => !drillApp && setDrillApp(arc.label)}
+            />
+          ))}
+          {/* Centre labels */}
+          <text x={CX} y={CY - 10} textAnchor="middle" fill="#6b7280" fontSize={10}>
+            {drillApp ? drillApp : 'WAW Risk'}
+          </text>
+          <text x={CX} y={CY + 10} textAnchor="middle" fill="#111827" fontSize={20} fontWeight="700">
+            {drillApp ? (drillStat?.total ?? 0) : total}
+          </text>
+          <text x={CX} y={CY + 26} textAnchor="middle" fill="#9ca3af" fontSize={10}>
+            {drillApp ? 'defects' : 'risk score'}
+          </text>
+        </svg>
+
+        {/* Legend */}
+        <div className="flex-1 space-y-1 min-w-0 w-full">
+          {arcs.map(arc => (
+            <button
+              key={arc.label}
+              className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors ${
+                drillApp ? 'cursor-default' : 'hover:bg-surface cursor-pointer'
+              } ${hovered === arc.i ? 'bg-surface' : ''}`}
+              onMouseEnter={() => setHovered(arc.i)}
+              onMouseLeave={() => setHovered(null)}
+              onClick={() => !drillApp && setDrillApp(arc.label)}
+              disabled={!!drillApp}
+            >
+              <span className="w-3 h-3 rounded-sm shrink-0" style={{ background: arc.color }} />
+              <span className="flex-1 text-xs text-text-primary truncate">{arc.label}</span>
+              <span className="text-[10px] text-text-muted shrink-0 w-8 text-right">{Math.round(arc.pct * 100)}%</span>
+              <span className="text-[10px] font-semibold text-text-secondary shrink-0 w-8 text-right">{arc.value}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Filter chips ─────────────────────────────────────────────────────────────
+
+function FilterChips<T extends string>({
+  label, options, value, onChange,
+}: {
+  label: string;
+  options: { value: T; label: string }[];
+  value: T | null;
+  onChange: (v: T | null) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <span className="text-[10px] text-text-muted shrink-0">{label}:</span>
+      <button
+        className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${value === null ? 'border-purple-deep bg-purple-deep text-white' : 'border-surface-border text-text-muted hover:border-purple-deep hover:text-purple-deep'}`}
+        onClick={() => onChange(null)}
+      >Tutti</button>
+      {options.map(o => (
+        <button
+          key={o.value}
+          className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${value === o.value ? 'border-purple-deep bg-purple-deep text-white' : 'border-surface-border text-text-muted hover:border-purple-deep hover:text-purple-deep'}`}
+          onClick={() => onChange(value === o.value ? null : o.value)}
+        >{o.label}</button>
+      ))}
+    </div>
+  );
+}
 
 function RiskBadge({ level }: { level: 'high' | 'medium' | 'low' }) {
   const icon = level === 'high' ? <AlertTriangle size={11} /> : level === 'medium' ? <AlertCircle size={11} /> : <CheckCircle2 size={11} />;
@@ -94,7 +260,36 @@ interface Props {
 export default function UATDashboard({ result, fileName }: Props) {
   const [expandedDefect, setExpandedDefect] = useState<string | null>(null);
 
+  // ── Filter states ────────────────────────────────────────────────────────────
+  const [raRisk,    setRaRisk]    = useState<'high'|'medium'|'low'|null>(null);
+  const [raApp,     setRaApp]     = useState<string|null>(null);
+  const [paApp,     setPaApp]     = useState<string|null>(null);
+  const [paPrio,    setPaPrio]    = useState<'high'|'medium'|'low'|null>(null);
+  const [paEffort,  setPaEffort]  = useState<'low'|'medium'|'high'|null>(null);
+  const [rpPrio,    setRpPrio]    = useState<'high'|'medium'|'low'|null>(null);
+  const [rpApp,     setRpApp]     = useState<string|null>(null);
+
   const maxRiskScore = Math.max(...result.byApplication.map(a => a.riskScore), 1);
+
+  // ── Derived unique options ───────────────────────────────────────────────────
+  const raApps  = [...new Set(result.riskAreas.flatMap(a => a.relatedApplications))].slice(0, 6);
+  const paApps  = [...new Set(result.preventionActions.map(a => a.targetApplication))].slice(0, 6);
+  const rpApps  = [...new Set(result.recurringPatterns.flatMap(p => p.applications))].slice(0, 6);
+
+  // ── Filtered data ────────────────────────────────────────────────────────────
+  const filteredRiskAreas = result.riskAreas.filter(a =>
+    (!raRisk || a.riskLevel === raRisk) &&
+    (!raApp  || a.relatedApplications.includes(raApp))
+  );
+  const filteredPrevActions = result.preventionActions.filter(a =>
+    (!paPrio   || a.priority === paPrio) &&
+    (!paApp    || a.targetApplication === paApp) &&
+    (!paEffort || a.effort === paEffort)
+  );
+  const filteredPatterns = result.recurringPatterns.filter(p =>
+    (!rpPrio || p.priority === rpPrio) &&
+    (!rpApp  || p.applications.includes(rpApp))
+  );
 
   return (
     <div className="flex-1 overflow-y-auto bg-surface/30 p-6 space-y-6">
@@ -121,6 +316,9 @@ export default function UATDashboard({ result, fileName }: Props) {
           <p className="text-2xl font-bold text-text-primary">{result.byApplication.length}</p>
         </div>
       </div>
+
+      {/* ── WAW drill-down ───────────────────────────────────────── */}
+      {result.byApplication.length > 0 && <WawDrillDown result={result} />}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
 
@@ -196,58 +394,32 @@ export default function UATDashboard({ result, fileName }: Props) {
         )}
       </div>
 
-      {/* ── Top defects ───────────────────────────────────────────── */}
-      {result.topDefects.length > 0 && (
-        <div className="card p-5">
-          <SectionHeader
-            title="Top Critical & High Defects"
-            subtitle={`${result.topDefects.length} most impactful defects`}
-          />
-          <div className="space-y-2">
-            {result.topDefects.map(d => {
-              const isOpen = expandedDefect === d.id;
-              return (
-                <div
-                  key={d.id}
-                  className="border border-surface-border rounded-xl overflow-hidden"
-                >
-                  <button
-                    className="w-full flex items-center gap-3 p-3 text-left hover:bg-surface/60 transition-colors"
-                    onClick={() => setExpandedDefect(isOpen ? null : d.id)}
-                  >
-                    <PriorityBadge priority={d.priority} />
-                    <span className="text-xs font-medium text-text-primary flex-1 truncate">{d.title}</span>
-                    <span className="text-[10px] text-text-muted shrink-0 hidden sm:block">{d.application}</span>
-                    <span className="text-[10px] text-text-muted shrink-0 hidden md:block ml-2">{d.module}</span>
-                    {isOpen ? <ChevronUp size={13} className="text-text-muted shrink-0" /> : <ChevronDown size={13} className="text-text-muted shrink-0" />}
-                  </button>
-                  {isOpen && d.impact && (
-                    <div className="px-3 pb-3 bg-surface/40 border-t border-surface-border">
-                      <p className="text-xs text-text-secondary mt-2 leading-relaxed">{d.impact}</p>
-                      <div className="flex gap-2 mt-2 flex-wrap">
-                        <span className="text-[10px] text-text-muted">#{d.id}</span>
-                        <span className="text-[10px] text-text-muted">·</span>
-                        <span className="text-[10px] text-purple-deep font-medium">{d.application}</span>
-                        <span className="text-[10px] text-text-muted">·</span>
-                        <span className="text-[10px] text-text-muted">{d.module}</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
 
         {/* ── Risk areas ────────────────────────────────────────────── */}
         {result.riskAreas.length > 0 && (
           <div className="card p-5">
             <SectionHeader title="Risk Areas" subtitle="Evidence-based risk assessment from defect patterns" />
+            {/* Filters */}
+            <div className="space-y-1.5 mb-4">
+              <FilterChips<'high'|'medium'|'low'>
+                label="Rischio"
+                options={[{value:'high',label:'High'},{value:'medium',label:'Medium'},{value:'low',label:'Low'}]}
+                value={raRisk} onChange={setRaRisk}
+              />
+              {raApps.length > 0 && (
+                <FilterChips<string>
+                  label="App"
+                  options={raApps.map(a => ({ value: a, label: a }))}
+                  value={raApp} onChange={setRaApp}
+                />
+              )}
+            </div>
             <div className="space-y-3">
-              {result.riskAreas.map((area, i) => (
+              {filteredRiskAreas.length === 0 && (
+                <p className="text-xs text-text-muted py-2 text-center">Nessun risultato con i filtri selezionati.</p>
+              )}
+              {filteredRiskAreas.map((area, i) => (
                 <div key={i} className="rounded-xl border border-surface-border p-3.5 space-y-2">
                   <div className="flex items-start justify-between gap-2">
                     <p className="text-xs font-semibold text-text-primary flex-1">{area.area}</p>
@@ -275,8 +447,31 @@ export default function UATDashboard({ result, fileName }: Props) {
         {result.preventionActions.length > 0 && (
           <div className="card p-5">
             <SectionHeader title="Prevention Actions" subtitle="Prioritized recommendations to avoid recurrence" />
+            {/* Filters */}
+            <div className="space-y-1.5 mb-4">
+              <FilterChips<'high'|'medium'|'low'>
+                label="Priorità"
+                options={[{value:'high',label:'High'},{value:'medium',label:'Medium'},{value:'low',label:'Low'}]}
+                value={paPrio} onChange={setPaPrio}
+              />
+              <FilterChips<'low'|'medium'|'high'>
+                label="Effort"
+                options={[{value:'low',label:'Quick win'},{value:'medium',label:'Medium'},{value:'high',label:'High effort'}]}
+                value={paEffort} onChange={setPaEffort}
+              />
+              {paApps.length > 0 && (
+                <FilterChips<string>
+                  label="App"
+                  options={paApps.map(a => ({ value: a, label: a }))}
+                  value={paApp} onChange={setPaApp}
+                />
+              )}
+            </div>
             <div className="space-y-2.5">
-              {result.preventionActions.map((action, i) => (
+              {filteredPrevActions.length === 0 && (
+                <p className="text-xs text-text-muted py-2 text-center">Nessun risultato con i filtri selezionati.</p>
+              )}
+              {filteredPrevActions.map((action, i) => (
                 <div key={i} className="flex items-start gap-3 p-3 rounded-xl border border-surface-border">
                   <div className={`w-7 h-7 rounded-lg shrink-0 flex items-center justify-center ${
                     action.priority === 'high' ? 'bg-red-500' : action.priority === 'medium' ? 'bg-amber-400' : 'bg-green-400'
@@ -303,9 +498,31 @@ export default function UATDashboard({ result, fileName }: Props) {
       {/* ── Recurring patterns ───────────────────────────────────────── */}
       {result.recurringPatterns.length > 0 && (
         <div className="card p-5">
-          <SectionHeader title="Recurring Defect Patterns" subtitle="Issues that appeared multiple times across the UAT cycle" />
+          <div className="flex flex-col sm:flex-row sm:items-start gap-3 mb-4">
+            <div className="flex-1">
+              <SectionHeader title="Recurring Defect Patterns" subtitle="Issues that appeared multiple times across the UAT cycle" />
+            </div>
+            {/* Filters */}
+            <div className="space-y-1.5 shrink-0">
+              <FilterChips<'high'|'medium'|'low'>
+                label="Priorità"
+                options={[{value:'high',label:'High'},{value:'medium',label:'Medium'},{value:'low',label:'Low'}]}
+                value={rpPrio} onChange={setRpPrio}
+              />
+              {rpApps.length > 0 && (
+                <FilterChips<string>
+                  label="App"
+                  options={rpApps.map(a => ({ value: a, label: a }))}
+                  value={rpApp} onChange={setRpApp}
+                />
+              )}
+            </div>
+          </div>
           <div className="space-y-2">
-            {result.recurringPatterns.map((p, i) => (
+            {filteredPatterns.length === 0 && (
+              <p className="text-xs text-text-muted py-2 text-center">Nessun risultato con i filtri selezionati.</p>
+            )}
+            {filteredPatterns.map((p, i) => (
               <div key={i} className="flex items-center gap-3 p-3 rounded-xl border border-surface-border">
                 <div className={`text-sm font-bold w-8 text-center shrink-0 ${
                   p.priority === 'high' ? 'text-red-600' : p.priority === 'medium' ? 'text-amber-600' : 'text-green-600'
@@ -320,6 +537,47 @@ export default function UATDashboard({ result, fileName }: Props) {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Top defects (bottom) ──────────────────────────────────────── */}
+      {result.topDefects.length > 0 && (
+        <div className="card p-5">
+          <SectionHeader
+            title="Top Critical & High Defects"
+            subtitle={`${result.topDefects.length} most impactful defects`}
+          />
+          <div className="space-y-2">
+            {result.topDefects.map(d => {
+              const isOpen = expandedDefect === d.id;
+              return (
+                <div key={d.id} className="border border-surface-border rounded-xl overflow-hidden">
+                  <button
+                    className="w-full flex items-center gap-3 p-3 text-left hover:bg-surface/60 transition-colors"
+                    onClick={() => setExpandedDefect(isOpen ? null : d.id)}
+                  >
+                    <PriorityBadge priority={d.priority} />
+                    <span className="text-xs font-medium text-text-primary flex-1 truncate">{d.title}</span>
+                    <span className="text-[10px] text-text-muted shrink-0 hidden sm:block">{d.application}</span>
+                    <span className="text-[10px] text-text-muted shrink-0 hidden md:block ml-2">{d.module}</span>
+                    {isOpen ? <ChevronUp size={13} className="text-text-muted shrink-0" /> : <ChevronDown size={13} className="text-text-muted shrink-0" />}
+                  </button>
+                  {isOpen && d.impact && (
+                    <div className="px-3 pb-3 bg-surface/40 border-t border-surface-border">
+                      <p className="text-xs text-text-secondary mt-2 leading-relaxed">{d.impact}</p>
+                      <div className="flex gap-2 mt-2 flex-wrap">
+                        <span className="text-[10px] text-text-muted">#{d.id}</span>
+                        <span className="text-[10px] text-text-muted">·</span>
+                        <span className="text-[10px] text-purple-deep font-medium">{d.application}</span>
+                        <span className="text-[10px] text-text-muted">·</span>
+                        <span className="text-[10px] text-text-muted">{d.module}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

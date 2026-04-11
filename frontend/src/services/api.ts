@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, UATAnalysis, UATAnalysisResult } from '../types';
+import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -87,6 +87,21 @@ export const analysisApi = {
 
   deleteFeedback: (projectId: string, analysisId: string, impactId: string) =>
     api.delete(`/api/analysis/${projectId}/${analysisId}/feedback/${encodeURIComponent(impactId)}`).then(r => r.data),
+
+  listOQFeedback: (projectId: string, analysisId: string) =>
+    api.get<OpenQuestionFeedback[]>(`/api/analysis/${projectId}/${analysisId}/open-question-feedback`).then(r => r.data),
+
+  saveOQFeedback: (
+    projectId: string,
+    analysisId: string,
+    questionText: string,
+    sentiment: 'positive' | 'negative' | null,
+    answer?: string | null
+  ) =>
+    api.post<OpenQuestionFeedback>(`/api/analysis/${projectId}/${analysisId}/open-question-feedback`, { questionText, sentiment, answer }).then(r => r.data),
+
+  deleteOQFeedback: (projectId: string, analysisId: string, questionText: string) =>
+    api.delete(`/api/analysis/${projectId}/${analysisId}/open-question-feedback`, { data: { questionText } }).then(r => r.data),
 
   impactDeepDive: (
     projectId: string,

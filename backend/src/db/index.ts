@@ -115,6 +115,17 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS open_question_feedback (
+    id TEXT PRIMARY KEY,
+    analysis_id TEXT NOT NULL,
+    question_text TEXT NOT NULL,
+    sentiment TEXT CHECK(sentiment IN ('positive', 'negative')),
+    answer TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE,
+    UNIQUE(analysis_id, question_text)
+  );
 `);
 
 // --- Migration: add progress_step to analyses if missing ---

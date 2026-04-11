@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import type {
-  AnalysisResult, Impact, AffectedScreen, BusinessRule, ProposedChange, ImpactFeedback
+  AnalysisResult, Impact, BusinessRule, ProposedChange, ImpactFeedback, OpenQuestionFeedback
 } from '../types';
 import {
   FileText, Layers, Monitor, BookOpen,
-  HelpCircle, Lightbulb, AlertTriangle, TrendingUp, ChevronDown, ChevronUp,
-  ThumbsUp, ThumbsDown
+  HelpCircle, Lightbulb, AlertTriangle, ChevronDown, ChevronUp,
+  ThumbsUp, ThumbsDown, MessageSquarePlus, CheckCircle2, XCircle
 } from 'lucide-react';
 import ImpactPrototype from './ImpactPrototype';
 import ImpactDeepDive from './ImpactDeepDive';
@@ -17,13 +17,12 @@ interface AnalysisTabsProps {
   analysisId: string;
 }
 
-type TabId = 'summary' | 'functional' | 'uiux' | 'screens' | 'questions';
+type TabId = 'summary' | 'functional' | 'uiux' | 'questions';
 
 const TABS: { id: TabId; label: string; icon: typeof FileText }[] = [
   { id: 'summary', label: 'Executive Summary', icon: FileText },
   { id: 'functional', label: 'Functional Impacts', icon: Layers },
   { id: 'uiux', label: 'UI/UX Impacts', icon: Monitor },
-  { id: 'screens', label: 'Affected Screens', icon: TrendingUp },
   { id: 'questions', label: 'Open Questions', icon: HelpCircle },
 ];
 
@@ -171,29 +170,122 @@ function ExpandableImpactCard({
   );
 }
 
-function ScreenCard({ screen }: { screen: AffectedScreen }) {
-  const changeColors = {
-    modified: 'bg-amber-50 text-amber-700 border-amber-100',
-    new: 'bg-emerald-50 text-emerald-700 border-emerald-100',
-    removed: 'bg-red-50 text-red-700 border-red-100',
-  };
+
+// --- Open Question Card with feedback ---
+interface OpenQuestionCardProps {
+  question: string;
+  projectId: string;
+  analysisId: string;
+  feedback: OpenQuestionFeedback | undefined;
+  onSaved: (f: OpenQuestionFeedback) => void;
+  onDeleted: (questionText: string) => void;
+}
+
+function OpenQuestionCard({ question, projectId, analysisId, feedback, onSaved, onDeleted }: OpenQuestionCardProps) {
+  const [showAnswer, setShowAnswer] = useState(!!feedback?.answer);
+  const [answer, setAnswer] = useState(feedback?.answer ?? '');
+  const [saving, setSaving] = useState(false);
+
+  const isDismissed = feedback?.sentiment === 'negative';
+  const isConfirmed = feedback?.sentiment === 'positive';
+
+  async function handleSentiment(sentiment: 'positive' | 'negative') {
+    if (feedback?.sentiment === sentiment) {
+      await analysisApi.deleteOQFeedback(projectId, analysisId, question);
+      onDeleted(question);
+      return;
+    }
+    setSaving(true);
+    const saved = await analysisApi.saveOQFeedback(projectId, analysisId, question, sentiment, feedback?.answer ?? null);
+    onSaved(saved);
+    setSaving(false);
+  }
+
+  async function handleSaveAnswer() {
+    setSaving(true);
+    const saved = await analysisApi.saveOQFeedback(projectId, analysisId, question, feedback?.sentiment ?? null, answer || null);
+    onSaved(saved);
+    setSaving(false);
+    setShowAnswer(false);
+  }
+
+  const borderLeft = isDismissed
+    ? 'border-l-4 border-l-slate-300'
+    : isConfirmed
+    ? 'border-l-4 border-l-emerald-400'
+    : feedback?.answer
+    ? 'border-l-4 border-l-blue-400'
+    : '';
+
   return (
-    <div className="card p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <h4 className="text-sm font-semibold text-text-primary">{screen.name}</h4>
-        <span className={`badge border ${changeColors[screen.changeType]}`}>
-          {screen.changeType.charAt(0).toUpperCase() + screen.changeType.slice(1)}
-        </span>
+    <div className={`card p-4 space-y-3 ${borderLeft} ${isDismissed ? 'opacity-60' : ''}`}>
+      <div className="flex gap-3">
+        <div className="w-6 h-6 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center shrink-0 mt-0.5">
+          {isDismissed
+            ? <XCircle size={12} className="text-slate-400" />
+            : isConfirmed
+            ? <CheckCircle2 size={12} className="text-emerald-500" />
+            : <AlertTriangle size={12} className="text-amber-600" />}
+        </div>
+        <p className={`text-sm leading-relaxed flex-1 ${isDismissed ? 'line-through text-text-muted' : 'text-text-secondary'}`}>{question}</p>
       </div>
-      {screen.changeType !== 'new' && (
-        <div>
-          <p className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-1">Current Behavior</p>
-          <p className="text-sm text-text-secondary">{screen.currentBehavior}</p>
+
+      {/* Existing answer preview */}
+      {feedback?.answer && !showAnswer && (
+        <div className="ml-9 bg-blue-50/60 border border-blue-100 rounded-lg px-3 py-2 text-xs text-blue-800">
+          <span className="font-semibold">Risposta: </span>{feedback.answer}
         </div>
       )}
-      <div>
-        <p className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-1">Proposed Behavior</p>
-        <p className="text-sm text-text-secondary">{screen.proposedBehavior}</p>
+
+      {/* Answer input */}
+      {showAnswer && (
+        <div className="ml-9 flex gap-2 items-end">
+          <textarea
+            className="input text-xs resize-none flex-1"
+            rows={2}
+            placeholder="Scrivi una risposta o annotazione per raffinare la prossima analisi…"
+            value={answer}
+            onChange={e => setAnswer(e.target.value)}
+            autoFocus
+          />
+          <button onClick={handleSaveAnswer} disabled={saving} className="btn-primary text-xs py-1.5 px-3 shrink-0 self-end">
+            Salva
+          </button>
+          <button onClick={() => setShowAnswer(false)} className="btn-secondary text-xs py-1.5 px-3 shrink-0 self-end">
+            Annulla
+          </button>
+        </div>
+      )}
+
+      {/* Action bar */}
+      <div className="ml-9 flex items-center gap-2">
+        <span className="text-xs text-text-muted">Feedback:</span>
+        <button
+          onClick={() => handleSentiment('positive')}
+          disabled={saving}
+          title="Domanda ancora aperta / rilevante"
+          className={`p-1.5 rounded-lg border transition-colors text-xs flex items-center gap-1 ${isConfirmed ? 'bg-emerald-50 border-emerald-300 text-emerald-600' : 'border-surface-border text-text-muted hover:text-emerald-600 hover:border-emerald-200'}`}
+        >
+          <ThumbsUp size={11} />
+        </button>
+        <button
+          onClick={() => handleSentiment('negative')}
+          disabled={saving}
+          title="Chiudi / non rilevante"
+          className={`p-1.5 rounded-lg border transition-colors text-xs flex items-center gap-1 ${isDismissed ? 'bg-red-50 border-red-300 text-red-500' : 'border-surface-border text-text-muted hover:text-red-500 hover:border-red-200'}`}
+        >
+          <ThumbsDown size={11} />
+        </button>
+        <button
+          onClick={() => { setShowAnswer(true); setAnswer(feedback?.answer ?? ''); }}
+          disabled={saving}
+          title="Aggiungi risposta"
+          className="p-1.5 rounded-lg border border-surface-border text-text-muted hover:text-blue-600 hover:border-blue-200 transition-colors"
+        >
+          <MessageSquarePlus size={11} />
+        </button>
+        {isDismissed && <span className="text-xs text-slate-400 ml-1">Chiusa</span>}
+        {isConfirmed && !isDismissed && <span className="text-xs text-emerald-600 ml-1">Confermata aperta</span>}
       </div>
     </div>
   );
@@ -204,10 +296,14 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
   const [expandedFuncIds, setExpandedFuncIds] = useState<Set<string>>(new Set());
   const [expandedUiIds, setExpandedUiIds] = useState<Set<string>>(new Set());
   const [feedbackMap, setFeedbackMap] = useState<Map<string, ImpactFeedback>>(new Map());
+  const [oqFeedbackMap, setOqFeedbackMap] = useState<Map<string, OpenQuestionFeedback>>(new Map());
 
   useEffect(() => {
     analysisApi.listFeedback(projectId, analysisId)
       .then(list => setFeedbackMap(new Map(list.map(f => [f.impact_id, f]))))
+      .catch(() => {});
+    analysisApi.listOQFeedback(projectId, analysisId)
+      .then(list => setOqFeedbackMap(new Map(list.map(f => [f.question_text, f]))))
       .catch(() => {});
   }, [projectId, analysisId]);
 
@@ -386,31 +482,25 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
           </div>
         )}
 
-        {/* Affected Screens */}
-        {activeTab === 'screens' && (
-          <div className="space-y-3 w-full">
-            <p className="text-sm text-text-muted">{result.affectedScreens.length} screens affected</p>
-            {result.affectedScreens.length === 0 ? (
-              <div className="card p-8 text-center text-text-muted text-sm">No affected screens recorded.</div>
-            ) : (
-              result.affectedScreens.map((screen, i) => <ScreenCard key={i} screen={screen} />)
-            )}
-          </div>
-        )}
+
 
         {/* Open Questions */}
         {activeTab === 'questions' && (
           <div className="space-y-3 w-full">
+            <p className="text-sm text-text-muted">Annota o rispondi alle domande aperte — il feedback verrà considerato nella prossima analisi.</p>
             {result.openQuestions.length === 0 ? (
-              <div className="card p-8 text-center text-text-muted text-sm">No open questions.</div>
+              <div className="card p-8 text-center text-text-muted text-sm">Nessuna domanda aperta.</div>
             ) : (
               result.openQuestions.map((q, i) => (
-                <div key={i} className="card p-4 flex gap-3">
-                  <div className="w-6 h-6 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center shrink-0 mt-0.5">
-                    <AlertTriangle size={12} className="text-amber-600" />
-                  </div>
-                  <p className="text-sm text-text-secondary leading-relaxed">{q}</p>
-                </div>
+                <OpenQuestionCard
+                  key={i}
+                  question={q}
+                  projectId={projectId}
+                  analysisId={analysisId}
+                  feedback={oqFeedbackMap.get(q)}
+                  onSaved={f => setOqFeedbackMap(prev => new Map(prev).set(f.question_text, f))}
+                  onDeleted={qt => setOqFeedbackMap(prev => { const next = new Map(prev); next.delete(qt); return next; })}
+                />
               ))
             )}
           </div>

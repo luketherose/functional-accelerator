@@ -41,10 +41,17 @@ import type { FileBucket } from '../types';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+export interface OQAnswer {
+  question_text: string;
+  sentiment: 'positive' | 'negative' | null;
+  answer: string | null;
+}
+
 export interface PipelineOptions {
   /** Called at each step transition so the route can persist progress to DB. */
   onProgress?: (step: string) => void;
   prevFeedback?: ImpactFeedback[];
+  prevOQAnswers?: OQAnswer[];
   /** Project ID — needed for RAG vector store lookup. */
   projectId?: string;
 }
@@ -223,7 +230,7 @@ export async function runAnalysisPipeline(
   files: ProjectFile[],
   options: PipelineOptions = {}
 ): Promise<AnalysisResult> {
-  const { onProgress, prevFeedback = [], projectId } = options;
+  const { onProgress, prevFeedback = [], prevOQAnswers = [], projectId } = options;
 
   // ── Mock mode ──────────────────────────────────────────────────────────────
   if (process.env.CLAUDE_MOCK === 'true') {
@@ -329,7 +336,7 @@ export async function runAnalysisPipeline(
 
   const result = await callClaudeStep<AnalysisResult>(
     buildSynthesisSystemPrompt(),
-    buildSynthesisUserPrompt(project, actionableDeltas, coverageWarning, prevFeedback),
+    buildSynthesisUserPrompt(project, actionableDeltas, coverageWarning, prevFeedback, prevOQAnswers),
     0.2,
     32000
   );

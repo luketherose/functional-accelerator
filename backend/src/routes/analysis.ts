@@ -9,6 +9,7 @@ import { callClaudeForHtml, callClaudeChat } from '../services/claude';
 import { runAnalysisPipeline } from '../services/pipeline';
 import { readImageAsBase64 } from '../services/fileParsing';
 import { renderHtmlToPng } from '../services/imageRenderer';
+import { multiQuerySearch, formatRetrievedChunks, hasIndexedChunks } from '../services/vectorStore';
 import type { ProjectFile } from '../types';
 
 interface ImpactFeedbackRow {
@@ -17,6 +18,15 @@ interface ImpactFeedbackRow {
   impact_id: string;
   sentiment: 'positive' | 'negative';
   motivation: string | null;
+  created_at: string;
+}
+
+interface OQFeedbackRow {
+  id: string;
+  analysis_id: string;
+  question_text: string;
+  sentiment: 'positive' | 'negative' | null;
+  answer: string | null;
   created_at: string;
 }
 
@@ -87,17 +97,20 @@ router.post('/:projectId/run', async (req: Request, res: Response) => {
     db.prepare(`INSERT INTO analyses (id, project_id, version_name, status) VALUES (?, ?, ?, 'running')`).run(analysisId, projectId, versionName);
     db.prepare(`UPDATE projects SET status = 'analyzing', updated_at = datetime('now') WHERE id = ?`).run(projectId);
 
-    // Load feedback from the most recent completed analysis for this project
+    // Load feedback + OQ answers from the most recent completed analysis for this project
     const prevAnalysis = db.prepare(
       "SELECT id FROM analyses WHERE project_id = ? AND status = 'done' ORDER BY created_at DESC LIMIT 1"
     ).get(projectId) as { id: string } | undefined;
     const prevFeedback = prevAnalysis
       ? (db.prepare('SELECT * FROM impact_feedback WHERE analysis_id = ?').all(prevAnalysis.id) as ImpactFeedbackRow[])
       : [];
+    const prevOQFeedback = prevAnalysis
+      ? (db.prepare('SELECT * FROM open_question_feedback WHERE analysis_id = ?').all(prevAnalysis.id) as OQFeedbackRow[])
+      : [];
 
     res.status(202).json({ analysisId, versionName, status: 'running' });
 
-    runAnalysisAsync(analysisId, projectId, project, files, prevFeedback).catch((err) => {
+    runAnalysisAsync(analysisId, projectId, project, files, prevFeedback, prevOQFeedback).catch((err) => {
       console.error('[analysis] Async error:', err);
     });
 
@@ -169,7 +182,8 @@ async function runAnalysisAsync(
   projectId: string,
   project: { name: string; description: string },
   files: ProjectFile[],
-  prevFeedback: ImpactFeedbackRow[] = []
+  prevFeedback: ImpactFeedbackRow[] = [],
+  prevOQFeedback: OQFeedbackRow[] = []
 ) {
   const brCount = files.filter(f => f.bucket === 'business-rules').length;
   const inputSummary = `Project: ${project.name} | Files: ${files.length} (${files.filter(f => f.bucket === 'as-is').length} as-is, ${files.filter(f => f.bucket === 'to-be').length} to-be${brCount > 0 ? `, ${brCount} BR` : ''})`;
@@ -188,6 +202,11 @@ async function runAnalysisAsync(
         impact_id: f.impact_id,
         sentiment: f.sentiment,
         motivation: f.motivation,
+      })),
+      prevOQAnswers: prevOQFeedback.map(q => ({
+        question_text: q.question_text,
+        sentiment: q.sentiment,
+        answer: q.answer,
       })),
     });
 
@@ -275,17 +294,87 @@ router.post('/:projectId/:analysisId/impact-deepdive', async (req: Request, res:
     const project = db.prepare('SELECT name, description FROM projects WHERE id = ?').get(projectId) as { name: string; description: string } | undefined;
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
-    const files = db.prepare('SELECT * FROM files WHERE project_id = ? ORDER BY created_at DESC').all(projectId) as ProjectFile[];
+    const queries = [impactArea, impactDescription];
+    let systemPrompt: string;
 
-    const systemPrompt = buildDeepDiveSystemPrompt(project, files, { area: impactArea, description: impactDescription });
-    console.log(`[analysis] Deep dive for impact "${impactArea}" in project ${projectId}, ${messages.length} messages`);
+    if (hasIndexedChunks(projectId)) {
+      // RAG mode: retrieve impact-focused chunks from both buckets in parallel
+      console.log(`[analysis] Deep dive RAG retrieval for impact "${impactArea}" in project ${projectId}`);
+      const [asisChunks, tobeChunks, brChunks] = await Promise.all([
+        multiQuerySearch(projectId, 'as-is', queries, 20),
+        multiQuerySearch(projectId, 'to-be', queries, 20),
+        multiQuerySearch(projectId, 'business-rules', queries, 10),
+      ]);
+
+      const retrievedContext = {
+        asis: formatRetrievedChunks(asisChunks, 'AS-IS Passages', 40_000),
+        tobe: formatRetrievedChunks(tobeChunks, 'TO-BE Passages', 40_000),
+        br: brChunks.length > 0 ? formatRetrievedChunks(brChunks, 'Business Rules Passages', 20_000) : '',
+      };
+      systemPrompt = buildDeepDiveSystemPrompt(project, { area: impactArea, description: impactDescription }, retrievedContext);
+    } else {
+      // Fallback: pass full file texts (no indexed chunks)
+      console.log(`[analysis] Deep dive fallback (no RAG) for impact "${impactArea}" in project ${projectId}`);
+      const files = db.prepare('SELECT * FROM files WHERE project_id = ? ORDER BY created_at DESC').all(projectId) as ProjectFile[];
+      systemPrompt = buildDeepDiveSystemPrompt(project, { area: impactArea, description: impactDescription }, undefined, files);
+    }
+
+    console.log(`[analysis] Deep dive for impact "${impactArea}", ${messages.length} messages`);
     const response = await callClaudeChat(systemPrompt, messages);
-
     res.json({ response });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Deep dive failed';
     console.error('[analysis] Deep dive error:', msg);
     res.status(500).json({ error: msg });
+  }
+});
+
+// GET /api/analysis/:projectId/:analysisId/open-question-feedback
+router.get('/:projectId/:analysisId/open-question-feedback', (req: Request, res: Response) => {
+  try {
+    const rows = db.prepare('SELECT * FROM open_question_feedback WHERE analysis_id = ?').all(req.params.analysisId);
+    res.json(rows);
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch open question feedback' });
+  }
+});
+
+// POST /api/analysis/:projectId/:analysisId/open-question-feedback — upsert one question's feedback
+router.post('/:projectId/:analysisId/open-question-feedback', (req: Request, res: Response) => {
+  const { questionText, sentiment, answer } = req.body as {
+    questionText: string;
+    sentiment?: 'positive' | 'negative' | null;
+    answer?: string | null;
+  };
+  if (!questionText) return res.status(400).json({ error: 'questionText is required' });
+  try {
+    const existing = db.prepare('SELECT id FROM open_question_feedback WHERE analysis_id = ? AND question_text = ?')
+      .get(req.params.analysisId, questionText) as { id: string } | undefined;
+    if (existing) {
+      db.prepare("UPDATE open_question_feedback SET sentiment = ?, answer = ?, created_at = datetime('now') WHERE id = ?")
+        .run(sentiment ?? null, answer ?? null, existing.id);
+    } else {
+      db.prepare('INSERT INTO open_question_feedback (id, analysis_id, question_text, sentiment, answer) VALUES (?, ?, ?, ?, ?)')
+        .run(uuidv4(), req.params.analysisId, questionText, sentiment ?? null, answer ?? null);
+    }
+    const row = db.prepare('SELECT * FROM open_question_feedback WHERE analysis_id = ? AND question_text = ?')
+      .get(req.params.analysisId, questionText);
+    res.json(row);
+  } catch {
+    res.status(500).json({ error: 'Failed to save open question feedback' });
+  }
+});
+
+// DELETE /api/analysis/:projectId/:analysisId/open-question-feedback — remove feedback for one question
+router.delete('/:projectId/:analysisId/open-question-feedback', (req: Request, res: Response) => {
+  const { questionText } = req.body as { questionText: string };
+  if (!questionText) return res.status(400).json({ error: 'questionText is required' });
+  try {
+    db.prepare('DELETE FROM open_question_feedback WHERE analysis_id = ? AND question_text = ?')
+      .run(req.params.analysisId, questionText);
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ error: 'Failed to delete open question feedback' });
   }
 });
 

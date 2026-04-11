@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Loader2, Send, MessageSquare, AlertCircle, Copy, Check } from 'lucide-react';
+import { Loader2, Send, MessageSquare, AlertCircle, Copy, Check, Search, BookOpen, ChevronRight } from 'lucide-react';
 import axios from 'axios';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
@@ -12,8 +12,13 @@ interface ImpactDeepDiveProps {
   analysisId: string;
 }
 
-const INITIAL_QUESTION = (impact: Impact) =>
-  `Explain this impact in detail: what specifically changes between AS-IS and TO-BE for **${impact.area}**? Please cite relevant passages from the documentation where possible.`;
+type Mode = 'idle' | 'selecting' | 'chatting';
+type StartMode = 'full' | 'clarification' | null;
+
+const FULL_RETRIEVAL_QUESTION = (impact: Impact) =>
+  `Retrieve and summarise everything available in the project documentation about **${impact.area}**. Include: the current AS-IS behaviour, all TO-BE changes, any business rules, affected fields or screens, and any open questions or assumptions. Cite each passage with its section title.`;
+
+const CLARIFICATION_PLACEHOLDER = `Scrivi la tua domanda specifica su questo impatto…`;
 
 function renderMarkdown(text: string): string {
   const raw = marked.parse(text, { async: false }) as string;
@@ -30,7 +35,7 @@ function CopyButton({ text }: { text: string }) {
           setTimeout(() => setCopied(false), 2000);
         });
       }}
-      title="Copy response"
+      title="Copia risposta"
       className="shrink-0 p-1 rounded text-text-muted hover:text-text-secondary hover:bg-surface-hover transition-colors"
     >
       {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
@@ -39,10 +44,11 @@ function CopyButton({ text }: { text: string }) {
 }
 
 export default function ImpactDeepDive({ impact, projectId, analysisId }: ImpactDeepDiveProps) {
+  const [mode, setMode] = useState<Mode>('idle');
+  const [startMode, setStartMode] = useState<StartMode>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [started, setStarted] = useState(false);
   const [error, setError] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -74,10 +80,16 @@ export default function ImpactDeepDive({ impact, projectId, analysisId }: Impact
     }
   }, [projectId, analysisId, impact.area, impact.description]);
 
-  function handleStart() {
-    setStarted(true);
-    if (messages.length === 0) sendMessage(INITIAL_QUESTION(impact), []);
-    else setTimeout(() => inputRef.current?.focus(), 50);
+  function handleSelectFullRetrieval() {
+    setMode('chatting');
+    setStartMode('full');
+    sendMessage(FULL_RETRIEVAL_QUESTION(impact), []);
+  }
+
+  function handleSelectClarification() {
+    setMode('chatting');
+    setStartMode('clarification');
+    setTimeout(() => inputRef.current?.focus(), 50);
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -96,29 +108,96 @@ export default function ImpactDeepDive({ impact, projectId, analysisId }: Impact
 
   return (
     <div className="mt-4 pt-4 border-t border-surface-border space-y-3">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <MessageSquare size={13} className="text-purple-deep" />
-          <span className="text-xs font-semibold text-text-muted uppercase tracking-wide">Deep Dive</span>
+          <span className="text-xs font-semibold text-text-muted uppercase tracking-wide">Approfondisci impatto</span>
         </div>
-        {!started && (
-          <button onClick={handleStart} className="btn-secondary text-xs py-1 px-3">
-            Ask Claude about this impact
+        {mode === 'idle' && (
+          <button
+            onClick={() => setMode('selecting')}
+            className="btn-secondary text-xs py-1 px-3 flex items-center gap-1.5"
+          >
+            <Search size={12} />
+            Approfondisci impatto
+          </button>
+        )}
+        {mode !== 'idle' && (
+          <button
+            onClick={() => { setMode('idle'); setStartMode(null); setMessages([]); setError(''); setInput(''); }}
+            className="text-xs text-text-muted hover:text-text-secondary transition-colors"
+          >
+            Chiudi
           </button>
         )}
       </div>
 
-      {!started && (
+      {/* Idle hint */}
+      {mode === 'idle' && (
         <p className="text-xs text-text-muted">
-          Start a focused conversation with Claude using all project documents as context.
+          Recupera i passaggi rilevanti dalla documentazione del progetto e avvia una conversazione focalizzata su questo impatto.
         </p>
       )}
 
-      {started && (
+      {/* Intent selection */}
+      {mode === 'selecting' && (
+        <div className="space-y-2">
+          <p className="text-xs text-text-secondary font-medium">Come vuoi procedere?</p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {/* Option A: full retrieval */}
+            <button
+              onClick={handleSelectFullRetrieval}
+              className="group text-left rounded-lg border border-surface-border bg-surface p-3.5 hover:border-purple-deep hover:bg-purple-50/30 transition-all"
+            >
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-purple-100 text-purple-deep group-hover:bg-purple-200 transition-colors">
+                  <BookOpen size={14} />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-text-primary flex items-center gap-1">
+                    Analisi completa
+                    <ChevronRight size={12} className="text-text-muted" />
+                  </div>
+                  <div className="mt-0.5 text-xs text-text-muted leading-relaxed">
+                    Recupera tutto ciò che la documentazione dice su questo impatto: stato attuale, variazioni TO-BE, regole di business, schermate coinvolte.
+                  </div>
+                </div>
+              </div>
+            </button>
+
+            {/* Option B: targeted question */}
+            <button
+              onClick={handleSelectClarification}
+              className="group text-left rounded-lg border border-surface-border bg-surface p-3.5 hover:border-purple-deep hover:bg-purple-50/30 transition-all"
+            >
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-100 text-blue-600 group-hover:bg-blue-200 transition-colors">
+                  <Search size={14} />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-text-primary flex items-center gap-1">
+                    Chiarimento mirato
+                    <ChevronRight size={12} className="text-text-muted" />
+                  </div>
+                  <div className="mt-0.5 text-xs text-text-muted leading-relaxed">
+                    Fai una domanda specifica su un aspetto di questo impatto: un campo, una regola, un comportamento preciso.
+                  </div>
+                </div>
+              </div>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Chat */}
+      {mode === 'chatting' && (
         <>
-          {/* Messages */}
           <div className="space-y-4 max-h-[32rem] overflow-y-auto pr-1">
-            {messages.map((msg, i) => (
+            {messages.map((msg, i) => {
+              // Hide the auto-generated first user message in full-retrieval mode
+              if (startMode === 'full' && i === 0 && msg.role === 'user') return null;
+              return (
               <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
                 <div className={`w-6 h-6 rounded-full shrink-0 flex items-center justify-center text-[10px] font-bold mt-0.5 ${
                   msg.role === 'user' ? 'bg-purple-deep text-white' : 'bg-surface border border-surface-border text-text-muted'
@@ -154,14 +233,15 @@ export default function ImpactDeepDive({ impact, projectId, analysisId }: Impact
                   )}
                 </div>
               </div>
-            ))}
+              );
+            })}
 
             {loading && (
               <div className="flex gap-3">
                 <div className="w-6 h-6 rounded-full shrink-0 bg-surface border border-surface-border flex items-center justify-center text-[10px] font-bold text-text-muted">AI</div>
                 <div className="flex items-center gap-2 text-text-muted text-sm py-1">
                   <Loader2 size={13} className="animate-spin text-purple-deep" />
-                  <span>Analysing documentation…</span>
+                  <span>Recupero documentazione rilevante…</span>
                 </div>
               </div>
             )}
@@ -181,7 +261,7 @@ export default function ImpactDeepDive({ impact, projectId, analysisId }: Impact
               ref={inputRef}
               className="input text-sm resize-none flex-1"
               rows={2}
-              placeholder="Ask a follow-up… (Enter to send, Shift+Enter for newline)"
+              placeholder={CLARIFICATION_PLACEHOLDER}
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}

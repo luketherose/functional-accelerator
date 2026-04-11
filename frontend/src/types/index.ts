@@ -142,6 +142,15 @@ export interface UATAnalysisResult {
   qualityTrend: string;
 }
 
+export interface OpenQuestionFeedback {
+  id: string;
+  analysis_id: string;
+  question_text: string;
+  sentiment: 'positive' | 'negative' | null;
+  answer: string | null;
+  created_at: string;
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
