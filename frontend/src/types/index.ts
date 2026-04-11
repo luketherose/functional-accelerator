@@ -246,6 +246,21 @@ export interface ClusterConfig {
   sort_order: number;
 }
 
+// ─── Cluster suggestion (Phase 2D) ───────────────────────────────────────────
+
+export interface SuggestedCluster {
+  name: string;
+  rationale: string;
+  defectIds: string[];
+  suggestedKeywords: string[];
+}
+
+export interface SuggestClustersResult {
+  suggestions: SuggestedCluster[];
+  otherCount: number;
+  coveredCount: number;
+}
+
 export interface OpenQuestionFeedback {
   id: string;
   analysis_id: string;

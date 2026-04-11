@@ -16,6 +16,7 @@ import {
 import { uatApi } from '../services/api';
 import type { ClusterSummary, DefectRow, UATAnalysis } from '../types';
 import { parseUATResult } from '../services/api';
+import ClusterSuggestions from './ClusterSuggestions';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -631,13 +632,17 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
   }
 
   // ── Level 1: cluster grid ────────────────────────────────────────────────────
+  const otherCluster = clusters.find(c => c.clusterKey === 'other');
+  const visibleClusters = clusters.filter(c => c.clusterKey !== 'other');
+
   return (
     <div className="overflow-y-auto h-full">
-      <div className="p-4">
-        <div className="flex items-center gap-4 mb-4 p-3 rounded-lg bg-surface-muted/50 border border-surface-border text-xs text-text-secondary">
+      <div className="p-4 space-y-4">
+        {/* Summary bar */}
+        <div className="flex items-center gap-4 p-3 rounded-lg bg-surface-muted/50 border border-surface-border text-xs text-text-secondary">
           <span className="flex items-center gap-1.5">
             <Layers size={12} className="text-purple-deep" />
-            <strong className="text-text-primary">{clusters.length}</strong> clusters
+            <strong className="text-text-primary">{visibleClusters.length}</strong> clusters
           </span>
           <span className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-red-500" />
@@ -650,8 +655,9 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
           <span className="ml-auto text-text-muted">Click a cluster to drill down</span>
         </div>
 
+        {/* Named cluster grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {clusters.map(cluster => (
+          {visibleClusters.map(cluster => (
             <ClusterCard
               key={cluster.clusterKey}
               cluster={cluster}
@@ -659,6 +665,26 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
             />
           ))}
         </div>
+
+        {/* "Other" cluster drill-through + suggestion banner */}
+        {otherCluster && otherCluster.defectCount > 0 && (
+          <div className="space-y-2.5">
+            {/* Other cluster card (still clickable) */}
+            <ClusterCard
+              cluster={otherCluster}
+              onClick={() => setSelectedCluster(otherCluster)}
+            />
+            {/* Phase 2D: discover hidden themes */}
+            <ClusterSuggestions
+              projectId={projectId}
+              otherDefectCount={otherCluster.defectCount}
+              onAdopted={() => {
+                // Re-load cluster data after adopt — parent would need to refresh.
+                // For now, show a note; user can navigate away and back.
+              }}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

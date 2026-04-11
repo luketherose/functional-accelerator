@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult, DefectRow, ClusterTrendData, ClusterConfig, AuditOverride } from '../types';
+import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult, DefectRow, ClusterTrendData, ClusterConfig, AuditOverride, SuggestClustersResult } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -236,6 +236,10 @@ export const uatApi = {
   /** Remove the override for a specific defect (restores computed priority) */
   deleteOverride: (projectId: string, defectId: string) =>
     api.delete(`/api/uat/${projectId}/defects/${defectId}/override`).then(r => r.data),
+
+  /** Phase 2D — discover hidden themes in unclassified ("Other") defects */
+  suggestClusters: (projectId: string) =>
+    api.post<SuggestClustersResult>(`/api/uat/${projectId}/suggest-clusters`, {}, { timeout: 120_000 }).then(r => r.data),
 };
 
 export function parseUATResult(analysis: UATAnalysis): UATAnalysisResult | null {

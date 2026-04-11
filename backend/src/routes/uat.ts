@@ -7,6 +7,7 @@ import db from '../db';
 import { parseALMExcel } from '../services/almParser';
 import { runUATPipeline } from '../services/uatPipeline';
 import { DEFAULT_TAXONOMY, classifyDefects } from '../services/taxonomy';
+import { suggestClusters } from '../services/clusterSuggestions';
 import type { UATAnalysis } from '../types';
 
 const router = Router();
@@ -375,6 +376,49 @@ router.get('/:projectId/defects/all', (req: Request, res: Response) => {
     res.json({ defects: rows, total, limit, offset });
   } catch {
     res.status(500).json({ error: 'Failed to fetch defects' });
+  }
+});
+
+// ─── POST /api/uat/:projectId/suggest-clusters — Phase 2D: discover hidden themes ─
+router.post('/:projectId/suggest-clusters', async (req: Request, res: Response) => {
+  const { projectId } = req.params as { projectId: string };
+  try {
+    const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    // Fetch all "other" defects across all runs for this project
+    const otherDefects = db.prepare(`
+      SELECT DISTINCT d.id, d.external_id, d.title, d.description
+      FROM cluster_assignments ca
+      JOIN defects d ON d.id = ca.defect_id
+      WHERE d.project_id = ? AND ca.cluster_key = 'other'
+      ORDER BY d.title
+    `).all(projectId) as { id: string; external_id: string; title: string; description: string }[];
+
+    if (otherDefects.length < 2) {
+      return res.json({ suggestions: [], otherCount: otherDefects.length, coveredCount: 0 });
+    }
+
+    // Load existing cluster names (to avoid suggesting duplicates)
+    const configRows = db.prepare(
+      'SELECT cluster_name FROM cluster_configs WHERE project_id = ?'
+    ).all(projectId) as { cluster_name: string }[];
+    const existingNames = configRows.length > 0
+      ? configRows.map(r => r.cluster_name)
+      : DEFAULT_TAXONOMY.map(c => c.name);
+
+    console.log(`[uat] Suggesting clusters for ${otherDefects.length} unclassified defects in project ${projectId}`);
+
+    const result = await suggestClusters(
+      otherDefects.map(d => ({ id: d.external_id, title: d.title, description: d.description })),
+      existingNames
+    );
+
+    res.json(result);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Failed to suggest clusters';
+    console.error('[uat] suggest-clusters error:', msg);
+    res.status(500).json({ error: msg });
   }
 });
 
