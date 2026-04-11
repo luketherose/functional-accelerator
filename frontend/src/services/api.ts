@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult, DefectRow, ClusterTrendData, ClusterConfig, AuditOverride, SuggestClustersResult } from '../types';
+import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult, DefectRow, ClusterTrendData, ClusterConfig, AuditOverride, SuggestClustersResult, RunComparisonData } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -240,6 +240,10 @@ export const uatApi = {
   /** Phase 2D — discover hidden themes in unclassified ("Other") defects */
   suggestClusters: (projectId: string) =>
     api.post<SuggestClustersResult>(`/api/uat/${projectId}/suggest-clusters`, {}, { timeout: 120_000 }).then(r => r.data),
+
+  /** Phase 3B — side-by-side comparison of two completed runs */
+  compareRuns: (projectId: string, run1Id: string, run2Id: string) =>
+    api.get<RunComparisonData>(`/api/uat/${projectId}/compare`, { params: { run1: run1Id, run2: run2Id } }).then(r => r.data),
 };
 
 export function parseUATResult(analysis: UATAnalysis): UATAnalysisResult | null {

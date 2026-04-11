@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import * as XLSX from 'xlsx';
 import db from '../db';
 import { parseALMExcel } from '../services/almParser';
 import { runUATPipeline } from '../services/uatPipeline';
@@ -42,18 +43,9 @@ router.get('/:projectId', (req: Request, res: Response) => {
   }
 });
 
-// ─── GET /api/uat/:projectId/:analysisId — get one ────────────────────────────
-router.get('/:projectId/:analysisId', (req: Request, res: Response) => {
-  try {
-    const row = db.prepare(
-      'SELECT * FROM uat_analyses WHERE id = ? AND project_id = ?'
-    ).get(req.params.analysisId, req.params.projectId);
-    if (!row) return res.status(404).json({ error: 'UAT analysis not found' });
-    res.json(row);
-  } catch {
-    res.status(500).json({ error: 'Failed to fetch UAT analysis' });
-  }
-});
+// NOTE: GET /:projectId/:analysisId is intentionally placed AFTER all specific
+// two-segment routes (cluster-trend, taxonomy, overrides, compare, etc.) to avoid
+// Express matching those routes as `:analysisId`. See further below.
 
 // ─── GET /api/uat/:projectId/:analysisId/clusters — cluster summary list ──────
 router.get('/:projectId/:analysisId/clusters', (req: Request, res: Response) => {
@@ -501,6 +493,206 @@ router.delete('/:projectId/defects/:defectId/override', (req: Request, res: Resp
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: 'Failed to remove override' });
+  }
+});
+
+// ─── GET /api/uat/:projectId/compare — side-by-side run comparison (Phase 3B) ─
+router.get('/:projectId/compare', (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params as { projectId: string };
+    const { run1, run2 } = req.query as { run1?: string; run2?: string };
+
+    if (!run1 || !run2) return res.status(400).json({ error: 'run1 and run2 query params are required' });
+
+    const fetchAnalysis = (id: string) =>
+      db.prepare('SELECT id, version_name, created_at, defect_count FROM uat_analyses WHERE id = ? AND project_id = ? AND status = ?')
+        .get(id, projectId, 'done') as { id: string; version_name: string; created_at: string; defect_count: number } | undefined;
+
+    const a1 = fetchAnalysis(run1);
+    const a2 = fetchAnalysis(run2);
+    if (!a1 || !a2) return res.status(404).json({ error: 'One or both analyses not found or not completed' });
+
+    const clusterQuery = `
+      SELECT
+        ca.cluster_key,
+        ca.cluster_name,
+        COUNT(*)  AS defect_count,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Critical' THEN 4
+                 WHEN COALESCE(ro.overridden_priority, d.priority) = 'High'     THEN 2
+                 WHEN COALESCE(ro.overridden_priority, d.priority) = 'Medium'   THEN 1
+                 ELSE 0 END) AS risk_score,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Critical' THEN 1 ELSE 0 END) AS critical,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'High'     THEN 1 ELSE 0 END) AS high,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Medium'   THEN 1 ELSE 0 END) AS medium,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Low'      THEN 1 ELSE 0 END) AS low
+      FROM cluster_assignments ca
+      JOIN defects d ON d.id = ca.defect_id
+      LEFT JOIN risk_overrides ro ON ro.defect_id = d.id
+      WHERE ca.uat_analysis_id = ?
+      GROUP BY ca.cluster_key, ca.cluster_name
+      ORDER BY risk_score DESC
+    `;
+
+    const priorityQuery = `
+      SELECT COALESCE(ro.overridden_priority, d.priority) AS priority, COUNT(*) AS count
+      FROM cluster_assignments ca
+      JOIN defects d ON d.id = ca.defect_id
+      LEFT JOIN risk_overrides ro ON ro.defect_id = d.id
+      WHERE ca.uat_analysis_id = ?
+      GROUP BY priority
+    `;
+
+    type ClusterRow = { cluster_key: string; cluster_name: string; defect_count: number; risk_score: number; critical: number; high: number; medium: number; low: number };
+    type PriorityRow = { priority: string; count: number };
+
+    const clusters1 = db.prepare(clusterQuery).all(run1) as ClusterRow[];
+    const clusters2 = db.prepare(clusterQuery).all(run2) as ClusterRow[];
+    const priority1 = db.prepare(priorityQuery).all(run1) as PriorityRow[];
+    const priority2 = db.prepare(priorityQuery).all(run2) as PriorityRow[];
+
+    const toPriorityMap = (rows: PriorityRow[]) =>
+      Object.fromEntries(rows.map(r => [r.priority, r.count]));
+
+    const allClusterKeys = [...new Set([...clusters1.map(c => c.cluster_key), ...clusters2.map(c => c.cluster_key)])];
+    const clusterDeltas = allClusterKeys.map(key => {
+      const c1 = clusters1.find(c => c.cluster_key === key);
+      const c2 = clusters2.find(c => c.cluster_key === key);
+      return {
+        clusterKey: key,
+        clusterName: c1?.cluster_name ?? c2?.cluster_name ?? key,
+        run1Count: c1?.defect_count ?? 0,
+        run2Count: c2?.defect_count ?? 0,
+        delta: (c2?.defect_count ?? 0) - (c1?.defect_count ?? 0),
+        run1RiskScore: c1?.risk_score ?? 0,
+        run2RiskScore: c2?.risk_score ?? 0,
+        riskDelta: (c2?.risk_score ?? 0) - (c1?.risk_score ?? 0),
+        run1Critical: c1?.critical ?? 0, run1High: c1?.high ?? 0,
+        run2Critical: c2?.critical ?? 0, run2High: c2?.high ?? 0,
+      };
+    }).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+    const pm1 = toPriorityMap(priority1);
+    const pm2 = toPriorityMap(priority2);
+    const priorityKeys = ['Critical', 'High', 'Medium', 'Low'];
+    const priorityDeltas = Object.fromEntries(priorityKeys.map(p => [p, (pm2[p] ?? 0) - (pm1[p] ?? 0)]));
+
+    res.json({
+      run1: { id: a1.id, versionName: a1.version_name, date: a1.created_at, defectCount: a1.defect_count, byPriority: pm1, clusters: clusters1 },
+      run2: { id: a2.id, versionName: a2.version_name, date: a2.created_at, defectCount: a2.defect_count, byPriority: pm2, clusters: clusters2 },
+      delta: { defectCount: a2.defect_count - a1.defect_count, byPriority: priorityDeltas, clusterDeltas },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Comparison failed';
+    console.error('[uat] compare error:', msg);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ─── GET /api/uat/:projectId/:analysisId — get one (AFTER all specific routes) ─
+router.get('/:projectId/:analysisId', (req: Request, res: Response) => {
+  try {
+    const row = db.prepare(
+      'SELECT * FROM uat_analyses WHERE id = ? AND project_id = ?'
+    ).get(req.params.analysisId, req.params.projectId);
+    if (!row) return res.status(404).json({ error: 'UAT analysis not found' });
+    res.json(row);
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch UAT analysis' });
+  }
+});
+
+// ─── GET /api/uat/:projectId/:analysisId/export/defects.xlsx ─────────────────
+router.get('/:projectId/:analysisId/export/defects.xlsx', (req: Request, res: Response) => {
+  try {
+    const { projectId, analysisId } = req.params as { projectId: string; analysisId: string };
+
+    const analysis = db.prepare(
+      'SELECT id, version_name, created_at, defect_count FROM uat_analyses WHERE id = ? AND project_id = ?'
+    ).get(analysisId, projectId) as { id: string; version_name: string; created_at: string; defect_count: number } | undefined;
+    if (!analysis) return res.status(404).json({ error: 'UAT analysis not found' });
+
+    const project = db.prepare('SELECT name FROM projects WHERE id = ?').get(projectId) as { name: string } | undefined;
+
+    // ── Sheet 1: Defects ──────────────────────────────────────────────────────
+    const defectRows = db.prepare(`
+      SELECT
+        d.external_id        AS "Work Item ID",
+        d.title              AS "Summary",
+        COALESCE(ro.overridden_priority, d.priority) AS "Effective Priority",
+        d.priority           AS "Original Priority",
+        CASE WHEN ro.id IS NOT NULL THEN 'Yes' ELSE 'No' END AS "Priority Overridden",
+        ro.reason            AS "Override Reason",
+        ca.cluster_name      AS "Cluster",
+        ca.method            AS "Classification Method",
+        ca.matched_keywords  AS "Matched Keywords",
+        d.application        AS "Application",
+        d.module             AS "Module",
+        d.status             AS "Status",
+        d.severity           AS "Severity",
+        d.environment        AS "Environment",
+        d.detected_by        AS "Detected By",
+        d.assigned_to        AS "Assigned To",
+        d.detected_date      AS "Detected Date",
+        d.closed_date        AS "Closed Date",
+        d.description        AS "Description",
+        d.resolution         AS "Resolution / Comments"
+      FROM cluster_assignments ca
+      JOIN defects d ON d.id = ca.defect_id
+      LEFT JOIN risk_overrides ro ON ro.defect_id = d.id
+      WHERE ca.uat_analysis_id = ?
+      ORDER BY
+        CASE COALESCE(ro.overridden_priority, d.priority)
+          WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 WHEN 'Low' THEN 4 ELSE 5
+        END, ca.cluster_name, d.title
+    `).all(analysisId) as Record<string, string | null>[];
+
+    // ── Sheet 2: Cluster Summary ──────────────────────────────────────────────
+    const clusterRows = db.prepare(`
+      SELECT
+        ca.cluster_name      AS "Cluster",
+        COUNT(*)             AS "Total Defects",
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Critical' THEN 1 ELSE 0 END) AS "Critical",
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'High'     THEN 1 ELSE 0 END) AS "High",
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Medium'   THEN 1 ELSE 0 END) AS "Medium",
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Low'      THEN 1 ELSE 0 END) AS "Low",
+        SUM(CASE WHEN ro.id IS NOT NULL THEN 1 ELSE 0 END) AS "Overridden Priorities"
+      FROM cluster_assignments ca
+      JOIN defects d ON d.id = ca.defect_id
+      LEFT JOIN risk_overrides ro ON ro.defect_id = d.id
+      WHERE ca.uat_analysis_id = ?
+      GROUP BY ca.cluster_key, ca.cluster_name
+      ORDER BY "Critical" DESC, "High" DESC
+    `).all(analysisId) as Record<string, string | number>[];
+
+    // ── Build workbook ────────────────────────────────────────────────────────
+    const wb = XLSX.utils.book_new();
+
+    const wsDefects = XLSX.utils.json_to_sheet(
+      defectRows.map(r => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v ?? ''])))
+    );
+    // Auto-width columns
+    const defectColWidths = Object.keys(defectRows[0] ?? {}).map(k => ({
+      wch: Math.max(k.length, 14),
+    }));
+    wsDefects['!cols'] = defectColWidths;
+    XLSX.utils.book_append_sheet(wb, wsDefects, 'Defects');
+
+    const wsClusters = XLSX.utils.json_to_sheet(clusterRows);
+    wsClusters['!cols'] = Object.keys(clusterRows[0] ?? {}).map(k => ({ wch: Math.max(k.length, 12) }));
+    XLSX.utils.book_append_sheet(wb, wsClusters, 'Cluster Summary');
+
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    const safeName = (project?.name ?? 'project').replace(/[^a-z0-9]/gi, '-').toLowerCase();
+    const fileName = `${safeName}-${analysis.version_name.replace(/\s+/g, '-').toLowerCase()}-defects.xlsx`;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.send(buffer);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Export failed';
+    console.error('[uat] Excel export error:', msg);
+    res.status(500).json({ error: msg });
   }
 });
 

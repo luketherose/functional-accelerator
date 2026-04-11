@@ -1,6 +1,7 @@
-import { AlertTriangle, CheckCircle2, AlertCircle, TrendingUp, Shield, Zap, ChevronDown, ChevronUp, ChevronLeft } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, AlertCircle, TrendingUp, Shield, Zap, ChevronDown, ChevronUp, ChevronLeft, Download, Loader2 } from 'lucide-react';
 import { useState } from 'react';
-import type { UATAnalysisResult, UATApplicationStat } from '../types';
+import type { UATAnalysisResult, UATAnalysis, UATApplicationStat } from '../types';
+import { generateUATReport } from '../services/uatReport';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -254,11 +255,14 @@ function ApplicationBar({ stat, maxScore }: { stat: UATApplicationStat; maxScore
 
 interface Props {
   result: UATAnalysisResult;
+  analysis: UATAnalysis;
+  projectName: string;
   fileName: string | null;
 }
 
-export default function UATDashboard({ result, fileName }: Props) {
+export default function UATDashboard({ result, analysis, projectName, fileName }: Props) {
   const [expandedDefect, setExpandedDefect] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   // ── Filter states ────────────────────────────────────────────────────────────
   const [raRisk,    setRaRisk]    = useState<'high'|'medium'|'low'|null>(null);
@@ -291,8 +295,31 @@ export default function UATDashboard({ result, fileName }: Props) {
     (!rpApp  || p.applications.includes(rpApp))
   );
 
+  const handleExportPDF = async () => {
+    setExporting(true);
+    try {
+      generateUATReport(result, analysis, projectName);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="flex-1 overflow-y-auto bg-surface/30 p-6 space-y-6">
+
+      {/* ── Toolbar ───────────────────────────────────────────── */}
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-text-muted">{analysis.version_name} · {fileName}</p>
+        <button
+          onClick={handleExportPDF}
+          disabled={exporting}
+          className="btn-secondary text-xs flex items-center gap-1.5"
+          title="Esporta report PDF"
+        >
+          {exporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+          {exporting ? 'Generazione…' : 'Export PDF'}
+        </button>
+      </div>
 
       {/* ── KPI strip ─────────────────────────────────────────── */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">

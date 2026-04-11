@@ -261,6 +261,51 @@ export interface SuggestClustersResult {
   coveredCount: number;
 }
 
+// ─── Run comparison (Phase 3B) ───────────────────────────────────────────────
+
+export interface RunSnapshot {
+  id: string;
+  versionName: string;
+  date: string;
+  defectCount: number;
+  byPriority: Record<string, number>;
+  clusters: {
+    cluster_key: string;
+    cluster_name: string;
+    defect_count: number;
+    risk_score: number;
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+  }[];
+}
+
+export interface ClusterDelta {
+  clusterKey: string;
+  clusterName: string;
+  run1Count: number;
+  run2Count: number;
+  delta: number;
+  run1RiskScore: number;
+  run2RiskScore: number;
+  riskDelta: number;
+  run1Critical: number;
+  run1High: number;
+  run2Critical: number;
+  run2High: number;
+}
+
+export interface RunComparisonData {
+  run1: RunSnapshot;
+  run2: RunSnapshot;
+  delta: {
+    defectCount: number;
+    byPriority: Record<string, number>;
+    clusterDeltas: ClusterDelta[];
+  };
+}
+
 export interface OpenQuestionFeedback {
   id: string;
   analysis_id: string;

@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Play, Loader2, RefreshCw, Trash2,
   Clock, CheckCircle2, AlertCircle, FileText, History,
-  Pencil, X, Check, Database, ShieldAlert, Upload, BarChart2, Settings2
+  Pencil, X, Check, Database, ShieldAlert, Upload, BarChart2, Settings2, GitCompare
 } from 'lucide-react';
 import type { ProjectDetail, Analysis, FileBucket, UATAnalysis } from '../types';
 import { projectsApi, analysisApi, filesApi, uatApi, parseAnalysisResult, parseUATResult } from '../services/api';
@@ -16,6 +16,7 @@ import UATTrend from '../components/UATTrend';
 import ClusterDrillDown from '../components/ClusterDrillDown';
 import TaxonomyEditor from '../components/TaxonomyEditor';
 import AuditTrail from '../components/AuditTrail';
+import RunComparison from '../components/RunComparison';
 import PageHeader from '../components/Layout/PageHeader';
 
 function formatDate(iso: string) {
@@ -55,7 +56,7 @@ export default function ProjectDetailPage() {
   const [selectedUAT, setSelectedUAT] = useState<UATAnalysis | null>(null);
   const [uatUploading, setUatUploading] = useState(false);
   const [isUATRunning, setIsUATRunning] = useState(false);
-  const [uatTab, setUatTab] = useState<'overview' | 'trend' | 'defects' | 'audit'>('overview');
+  const [uatTab, setUatTab] = useState<'overview' | 'trend' | 'compare' | 'defects' | 'audit'>('overview');
   const [taxonomyOpen, setTaxonomyOpen] = useState(false);
 
   const load = useCallback(async () => {
@@ -565,6 +566,17 @@ export default function ProjectDetailPage() {
                   <ShieldAlert size={12} /> Audit Trail
                 </button>
                 <button
+                  onClick={() => setUatTab('compare')}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-all -mb-px ${uatTab === 'compare' ? 'border-purple-deep text-purple-deep' : 'border-transparent text-text-muted hover:text-text-primary'}`}
+                >
+                  <GitCompare size={12} /> Confronta
+                  {uatAnalyses.filter(a => a.status === 'done').length >= 2 && (
+                    <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">
+                      {uatAnalyses.filter(a => a.status === 'done').length}
+                    </span>
+                  )}
+                </button>
+                <button
                   onClick={() => setTaxonomyOpen(true)}
                   className="ml-auto flex items-center gap-1 px-2.5 py-1.5 text-[11px] text-text-muted hover:text-purple-deep hover:bg-surface-muted rounded-lg transition-colors my-auto"
                   title="Edit defect taxonomy"
@@ -623,7 +635,14 @@ export default function ProjectDetailPage() {
 
               {uatTab === 'overview' && !isUATRunning && selectedUAT && (() => {
                 const result = parseUATResult(selectedUAT);
-                return result ? <UATDashboard result={result} fileName={selectedUAT.file_name} /> : null;
+                return result ? (
+                  <UATDashboard
+                    result={result}
+                    analysis={selectedUAT}
+                    projectName={project.name}
+                    fileName={selectedUAT.file_name}
+                  />
+                ) : null;
               })()}
 
               {/* Defects / Cluster drill-down tab */}
@@ -645,6 +664,11 @@ export default function ProjectDetailPage() {
               {/* Audit Trail tab */}
               {uatTab === 'audit' && id && (
                 <AuditTrail projectId={id} />
+              )}
+
+              {/* Compare tab */}
+              {uatTab === 'compare' && id && (
+                <RunComparison analyses={uatAnalyses} projectId={id} />
               )}
             </div>
           </>
