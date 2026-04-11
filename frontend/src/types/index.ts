@@ -179,6 +179,45 @@ export interface UATAnalysisResult {
   clusterSummaries: ClusterSummary[];
 }
 
+// ─── Cluster trend (cross-run time series) ───────────────────────────────────
+
+export interface ClusterTrendRun {
+  analysisId: string;
+  versionName: string;
+  date: string;
+  totalDefects: number;
+}
+
+export interface ClusterTrendPoint {
+  defectCount: number;
+  riskScore: number;
+  criticalCount: number;
+  highCount: number;
+  mediumCount: number;
+  lowCount: number;
+}
+
+export interface ClusterTrendSeries {
+  clusterKey: string;
+  clusterName: string;
+  points: ClusterTrendPoint[]; // one per run, aligned with ClusterTrendData.runs
+}
+
+export interface ClusterTrendData {
+  runs: ClusterTrendRun[];
+  clusters: ClusterTrendSeries[];
+}
+
+// ─── Taxonomy config (per-project) ───────────────────────────────────────────
+
+export interface ClusterConfig {
+  id: string | null;
+  cluster_key: string;
+  cluster_name: string;
+  keywords: string[];
+  sort_order: number;
+}
+
 export interface OpenQuestionFeedback {
   id: string;
   analysis_id: string;

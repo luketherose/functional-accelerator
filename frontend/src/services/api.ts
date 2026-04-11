@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult, DefectRow } from '../types';
+import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult, DefectRow, ClusterTrendData, ClusterConfig } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -208,6 +208,22 @@ export const uatApi = {
       `/api/uat/${projectId}/defects/all`,
       { params: { limit, offset } }
     ).then(r => r.data),
+
+  /** Per-cluster time series across all completed runs */
+  clusterTrend: (projectId: string) =>
+    api.get<ClusterTrendData>(`/api/uat/${projectId}/cluster-trend`).then(r => r.data),
+
+  /** Get project taxonomy (DB config or defaults) */
+  getTaxonomy: (projectId: string) =>
+    api.get<ClusterConfig[]>(`/api/uat/${projectId}/taxonomy`).then(r => r.data),
+
+  /** Save full taxonomy for a project */
+  saveTaxonomy: (projectId: string, clusters: { cluster_key: string; cluster_name: string; keywords: string[] }[]) =>
+    api.put<{ success: boolean; saved: number }>(`/api/uat/${projectId}/taxonomy`, clusters).then(r => r.data),
+
+  /** Re-classify all defects using the current (possibly updated) taxonomy */
+  recluster: (projectId: string) =>
+    api.post<{ message: string; runs: number }>(`/api/uat/${projectId}/recluster`).then(r => r.data),
 };
 
 export function parseUATResult(analysis: UATAnalysis): UATAnalysisResult | null {

@@ -1,10 +1,12 @@
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { TrendingDown, TrendingUp, Minus, AlertTriangle, CheckCircle2, AlertCircle } from 'lucide-react';
-import type { UATAnalysis, UATAnalysisResult } from '../types';
-import { parseUATResult } from '../services/api';
+import type { UATAnalysis, UATAnalysisResult, ClusterTrendData } from '../types';
+import { parseUATResult, uatApi } from '../services/api';
+import DiagnosticInsights from './DiagnosticInsights';
 
 interface Props {
   analyses: UATAnalysis[];
+  projectId: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -128,7 +130,15 @@ function StackedBarChart({ runs }: { runs: RunPoint[] }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function UATTrend({ analyses }: Props) {
+export default function UATTrend({ analyses, projectId }: Props) {
+  const [clusterTrend, setClusterTrend] = useState<ClusterTrendData | null>(null);
+
+  useEffect(() => {
+    uatApi.clusterTrend(projectId)
+      .then(setClusterTrend)
+      .catch(() => setClusterTrend(null));
+  }, [projectId, analyses]);
+
   const runs = useMemo<RunPoint[]>(() => {
     return analyses
       .filter(a => a.status === 'done' && a.result_json)
@@ -198,6 +208,13 @@ export default function UATTrend({ analyses }: Props) {
 
   return (
     <div className="flex-1 overflow-y-auto bg-surface/30 p-6 space-y-6">
+
+      {/* ── Diagnostic Insights ───────────────────────────────────── */}
+      {clusterTrend && clusterTrend.clusters.length > 0 && (
+        <div className="card p-5">
+          <DiagnosticInsights data={clusterTrend} />
+        </div>
+      )}
 
       {/* ── Overall trend summary ──────────────────────────────────── */}
       <div className={`card p-5 border-l-4 ${trendPositive ? 'border-l-emerald-400' : trendNegative ? 'border-l-red-400' : 'border-l-slate-300'}`}>
@@ -368,6 +385,74 @@ export default function UATTrend({ analyses }: Props) {
           </table>
         </div>
       </div>
+
+      {/* ── Cluster evolution table ──────────────────────────────────── */}
+      {clusterTrend && clusterTrend.clusters.length > 0 && clusterTrend.runs.length >= 1 && (
+        <div className="card p-5">
+          <h3 className="text-sm font-semibold text-text-primary mb-1">Evoluzione per Cluster</h3>
+          <p className="text-xs text-text-muted mb-4">Numero di difetti per categoria tassonomica nel tempo</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-surface-border">
+                  <th className="text-left py-2 pr-4 font-semibold text-text-primary min-w-[140px]">Cluster</th>
+                  {clusterTrend.runs.map(r => (
+                    <th key={r.analysisId} className="text-right py-2 px-3 font-semibold text-text-muted min-w-[60px]">
+                      {r.versionName.replace('UAT Analysis ', 'v')}
+                    </th>
+                  ))}
+                  <th className="text-right py-2 px-3 font-semibold text-text-primary">Δ totale</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...clusterTrend.clusters]
+                  .filter(c => c.points.some(p => p.defectCount > 0))
+                  .sort((a, b) => (b.points[b.points.length - 1]?.riskScore ?? 0) - (a.points[a.points.length - 1]?.riskScore ?? 0))
+                  .map(cluster => {
+                    const pts = cluster.points;
+                    const first = pts[0]?.defectCount ?? 0;
+                    const latest = pts[pts.length - 1]?.defectCount ?? 0;
+                    const overall = latest - first;
+                    return (
+                      <tr key={cluster.clusterKey} className="border-b border-surface-border/50 hover:bg-surface/40">
+                        <td className="py-2.5 pr-4 font-medium text-text-primary">{cluster.clusterName}</td>
+                        {pts.map((pt, i) => {
+                          const prev = i > 0 ? pts[i - 1].defectCount : null;
+                          const delta = prev !== null ? pt.defectCount - prev : null;
+                          const cellClass = delta === null || delta === 0
+                            ? 'text-text-primary'
+                            : delta < 0 ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold';
+                          return (
+                            <td key={i} className="py-2.5 px-3 text-right">
+                              <span className={cellClass}>{pt.defectCount}</span>
+                              {delta !== null && delta !== 0 && (
+                                <span className="text-[10px] ml-1 text-text-muted">
+                                  ({delta > 0 ? '+' : ''}{delta})
+                                </span>
+                              )}
+                            </td>
+                          );
+                        })}
+                        <td className="py-2.5 px-3 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            {overall < 0
+                              ? <TrendingDown size={12} className="text-emerald-500" />
+                              : overall > 0
+                              ? <TrendingUp size={12} className="text-red-500" />
+                              : <Minus size={12} className="text-text-muted" />}
+                            <span className={overall < 0 ? 'text-emerald-600 font-semibold' : overall > 0 ? 'text-red-600 font-semibold' : 'text-text-muted'}>
+                              {overall === 0 ? '—' : `${overall > 0 ? '+' : ''}${overall}`}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* ── Per-application evolution ────────────────────────────────── */}
       {allApps.length > 0 && (

@@ -6,6 +6,7 @@ import fs from 'fs';
 import db from '../db';
 import { parseALMExcel } from '../services/almParser';
 import { runUATPipeline } from '../services/uatPipeline';
+import { DEFAULT_TAXONOMY, classifyDefects } from '../services/taxonomy';
 import type { UATAnalysis } from '../types';
 
 const router = Router();
@@ -140,6 +141,213 @@ router.get('/:projectId/:analysisId/clusters/:clusterKey/defects', (req: Request
     res.status(500).json({ error: 'Failed to fetch cluster defects' });
   }
 });
+
+// ─── GET /api/uat/:projectId/cluster-trend — per-cluster series across all runs ─
+router.get('/:projectId/cluster-trend', (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params as { projectId: string };
+
+    // Raw rows: one row per (analysis × cluster)
+    const rows = db.prepare(`
+      SELECT
+        ua.id          AS analysis_id,
+        ua.version_name,
+        ua.created_at  AS run_date,
+        ua.defect_count AS total_defects,
+        ca.cluster_key,
+        ca.cluster_name,
+        COUNT(*)        AS defect_count,
+        SUM(CASE WHEN d.priority = 'Critical' THEN 4
+                 WHEN d.priority = 'High'     THEN 2
+                 WHEN d.priority = 'Medium'   THEN 1
+                 ELSE 0 END)                  AS risk_score,
+        SUM(CASE WHEN d.priority = 'Critical' THEN 1 ELSE 0 END) AS critical_count,
+        SUM(CASE WHEN d.priority = 'High'     THEN 1 ELSE 0 END) AS high_count,
+        SUM(CASE WHEN d.priority = 'Medium'   THEN 1 ELSE 0 END) AS medium_count,
+        SUM(CASE WHEN d.priority = 'Low'      THEN 1 ELSE 0 END) AS low_count
+      FROM uat_analyses ua
+      JOIN cluster_assignments ca ON ca.uat_analysis_id = ua.id
+      JOIN defects d ON d.id = ca.defect_id
+      WHERE ua.project_id = ? AND ua.status = 'done'
+      GROUP BY ua.id, ua.version_name, ua.created_at, ua.defect_count, ca.cluster_key, ca.cluster_name
+      ORDER BY ua.created_at ASC, ca.cluster_key
+    `).all(projectId) as {
+      analysis_id: string; version_name: string; run_date: string; total_defects: number;
+      cluster_key: string; cluster_name: string; defect_count: number; risk_score: number;
+      critical_count: number; high_count: number; medium_count: number; low_count: number;
+    }[];
+
+    // Reshape: runs list + per-cluster point arrays
+    const runMap = new Map<string, { analysisId: string; versionName: string; date: string; totalDefects: number }>();
+    const clusterMap = new Map<string, { clusterKey: string; clusterName: string; points: Map<string, { defectCount: number; riskScore: number; criticalCount: number; highCount: number; mediumCount: number; lowCount: number }> }>();
+
+    for (const r of rows) {
+      if (!runMap.has(r.analysis_id)) {
+        runMap.set(r.analysis_id, { analysisId: r.analysis_id, versionName: r.version_name, date: r.run_date, totalDefects: r.total_defects ?? 0 });
+      }
+      if (!clusterMap.has(r.cluster_key)) {
+        clusterMap.set(r.cluster_key, { clusterKey: r.cluster_key, clusterName: r.cluster_name, points: new Map() });
+      }
+      clusterMap.get(r.cluster_key)!.points.set(r.analysis_id, {
+        defectCount: r.defect_count, riskScore: r.risk_score,
+        criticalCount: r.critical_count, highCount: r.high_count,
+        mediumCount: r.medium_count, lowCount: r.low_count,
+      });
+    }
+
+    const runs = [...runMap.values()];
+    const clusters = [...clusterMap.values()].map(c => ({
+      clusterKey: c.clusterKey,
+      clusterName: c.clusterName,
+      // one point per run (0 if cluster had no defects in that run)
+      points: runs.map(r => c.points.get(r.analysisId) ?? { defectCount: 0, riskScore: 0, criticalCount: 0, highCount: 0, mediumCount: 0, lowCount: 0 }),
+    }));
+
+    res.json({ runs, clusters });
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch cluster trend' });
+  }
+});
+
+// ─── GET /api/uat/:projectId/taxonomy — get project taxonomy (DB or defaults) ─
+router.get('/:projectId/taxonomy', (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params as { projectId: string };
+    const rows = db.prepare(
+      'SELECT * FROM cluster_configs WHERE project_id = ? ORDER BY sort_order ASC, cluster_key ASC'
+    ).all(projectId) as { id: string; cluster_key: string; cluster_name: string; keywords: string; sort_order: number }[];
+
+    if (rows.length > 0) {
+      res.json(rows.map(r => ({ ...r, keywords: JSON.parse(r.keywords) })));
+    } else {
+      // Return defaults (not yet saved to DB)
+      res.json(DEFAULT_TAXONOMY.map((c, i) => ({ id: null, cluster_key: c.key, cluster_name: c.name, keywords: c.keywords, sort_order: i })));
+    }
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch taxonomy' });
+  }
+});
+
+// ─── PUT /api/uat/:projectId/taxonomy — save full taxonomy for project ─────────
+router.put('/:projectId/taxonomy', (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params as { projectId: string };
+    const clusters = req.body as { cluster_key: string; cluster_name: string; keywords: string[] }[];
+
+    if (!Array.isArray(clusters)) return res.status(400).json({ error: 'Body must be an array of clusters' });
+
+    const upsert = db.prepare(`
+      INSERT INTO cluster_configs (id, project_id, cluster_key, cluster_name, keywords, sort_order, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(project_id, cluster_key) DO UPDATE SET
+        cluster_name = excluded.cluster_name,
+        keywords     = excluded.keywords,
+        sort_order   = excluded.sort_order,
+        updated_at   = datetime('now')
+    `);
+
+    // Delete clusters no longer in the list
+    const keys = clusters.map(c => c.cluster_key);
+    if (keys.length > 0) {
+      db.prepare(
+        `DELETE FROM cluster_configs WHERE project_id = ? AND cluster_key NOT IN (${keys.map(() => '?').join(',')})`
+      ).run(projectId, ...keys);
+    }
+
+    const save = db.transaction(() => {
+      clusters.forEach((c, i) => {
+        upsert.run(uuidv4(), projectId, c.cluster_key, c.cluster_name, JSON.stringify(c.keywords ?? []), i);
+      });
+    });
+    save();
+
+    res.json({ success: true, saved: clusters.length });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Failed to save taxonomy';
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ─── POST /api/uat/:projectId/recluster — re-classify all defects with current taxonomy ─
+router.post('/:projectId/recluster', async (req: Request, res: Response) => {
+  const { projectId } = req.params as { projectId: string };
+  try {
+    const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    // Load taxonomy (DB config or defaults)
+    const configRows = db.prepare(
+      'SELECT cluster_key, cluster_name, keywords FROM cluster_configs WHERE project_id = ? ORDER BY sort_order ASC'
+    ).all(projectId) as { cluster_key: string; cluster_name: string; keywords: string }[];
+
+    const taxonomy = configRows.length > 0
+      ? configRows.map(r => ({ key: r.cluster_key, name: r.cluster_name, keywords: JSON.parse(r.keywords) as string[] }))
+      : DEFAULT_TAXONOMY.map(c => ({ key: c.key, name: c.name, keywords: c.keywords }));
+
+    // Get all ingestion runs for this project
+    const ingestionRuns = db.prepare(
+      'SELECT ir.id as run_id, ua.id as analysis_id FROM ingestion_runs ir JOIN uat_analyses ua ON ua.id = ir.uat_analysis_id WHERE ir.project_id = ?'
+    ).all(projectId) as { run_id: string; analysis_id: string }[];
+
+    res.json({ message: 'Re-clustering started', runs: ingestionRuns.length });
+
+    // Run async
+    reclusterAsync(projectId, ingestionRuns, taxonomy).catch(err =>
+      console.error('[uat] Re-cluster error:', err)
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Re-cluster failed';
+    res.status(500).json({ error: msg });
+  }
+});
+
+async function reclusterAsync(
+  projectId: string,
+  ingestionRuns: { run_id: string; analysis_id: string }[],
+  taxonomy: { key: string; name: string; keywords: string[] }[]
+) {
+  console.log(`[uat] Re-clustering ${ingestionRuns.length} runs for project ${projectId}`);
+  let totalAssigned = 0;
+
+  for (const { run_id, analysis_id } of ingestionRuns) {
+    // Load defects for this run
+    const defects = db.prepare(
+      'SELECT id, title, description, module, application FROM defects WHERE ingestion_run_id = ?'
+    ).all(run_id) as { id: string; title: string; description: string; module: string; application: string }[];
+
+    if (defects.length === 0) continue;
+
+    // Classify with current taxonomy
+    const classifyWithTaxonomy = (d: typeof defects[0]) => {
+      const text = `${d.title} ${d.description} ${d.module}`.toLowerCase();
+      let bestCluster: typeof taxonomy[0] | null = null;
+      let bestMatches: string[] = [];
+      for (const cluster of taxonomy) {
+        const matched = cluster.keywords.filter(kw => text.includes(kw.toLowerCase()));
+        if (matched.length > bestMatches.length) { bestCluster = cluster; bestMatches = matched; }
+      }
+      return bestCluster && bestMatches.length > 0
+        ? { clusterKey: bestCluster.key, clusterName: bestCluster.name, method: 'rule', matchedKeywords: bestMatches.join(', ') }
+        : { clusterKey: 'other', clusterName: 'Other', method: 'unclassified', matchedKeywords: '' };
+    };
+
+    const deleteAndInsert = db.transaction(() => {
+      db.prepare('DELETE FROM cluster_assignments WHERE uat_analysis_id = ?').run(analysis_id);
+      const insertAssignment = db.prepare(`
+        INSERT INTO cluster_assignments (id, uat_analysis_id, defect_id, cluster_key, cluster_name, method, matched_keywords)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const d of defects) {
+        const cls = classifyWithTaxonomy(d);
+        insertAssignment.run(uuidv4(), analysis_id, d.id, cls.clusterKey, cls.clusterName, cls.method, cls.matchedKeywords);
+      }
+    });
+    deleteAndInsert();
+    totalAssigned += defects.length;
+  }
+
+  console.log(`[uat] Re-cluster complete: ${totalAssigned} assignments across ${ingestionRuns.length} runs`);
+}
 
 // ─── GET /api/uat/:projectId/defects — all defects for a project (all runs) ───
 router.get('/:projectId/defects/all', (req: Request, res: Response) => {

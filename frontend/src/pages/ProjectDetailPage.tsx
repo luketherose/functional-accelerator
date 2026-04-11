@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Play, Loader2, RefreshCw, Trash2,
   Clock, CheckCircle2, AlertCircle, FileText, History,
-  Pencil, X, Check, Database, ShieldAlert, Upload, BarChart2
+  Pencil, X, Check, Database, ShieldAlert, Upload, BarChart2, Settings2
 } from 'lucide-react';
 import type { ProjectDetail, Analysis, FileBucket, UATAnalysis } from '../types';
 import { projectsApi, analysisApi, filesApi, uatApi, parseAnalysisResult, parseUATResult } from '../services/api';
@@ -14,6 +14,7 @@ import AnalysisProgress from '../components/AnalysisProgress';
 import UATDashboard from '../components/UATDashboard';
 import UATTrend from '../components/UATTrend';
 import ClusterDrillDown from '../components/ClusterDrillDown';
+import TaxonomyEditor from '../components/TaxonomyEditor';
 import PageHeader from '../components/Layout/PageHeader';
 
 function formatDate(iso: string) {
@@ -54,6 +55,7 @@ export default function ProjectDetailPage() {
   const [uatUploading, setUatUploading] = useState(false);
   const [isUATRunning, setIsUATRunning] = useState(false);
   const [uatTab, setUatTab] = useState<'overview' | 'trend' | 'defects'>('overview');
+  const [taxonomyOpen, setTaxonomyOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -555,11 +557,23 @@ export default function ProjectDetailPage() {
                     <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{selectedUAT.defect_count}</span>
                   )}
                 </button>
+                <button
+                  onClick={() => setTaxonomyOpen(true)}
+                  className="ml-auto flex items-center gap-1 px-2.5 py-1.5 text-[11px] text-text-muted hover:text-purple-deep hover:bg-surface-muted rounded-lg transition-colors my-auto"
+                  title="Edit defect taxonomy"
+                >
+                  <Settings2 size={12} /> Taxonomy
+                </button>
               </div>
 
+              {/* Taxonomy editor modal */}
+              {taxonomyOpen && id && (
+                <TaxonomyEditor projectId={id} onClose={() => setTaxonomyOpen(false)} />
+              )}
+
               {/* Trend tab */}
-              {uatTab === 'trend' && (
-                <UATTrend analyses={uatAnalyses} />
+              {uatTab === 'trend' && id && (
+                <UATTrend analyses={uatAnalyses} projectId={id} />
               )}
 
               {/* Overview tab */}

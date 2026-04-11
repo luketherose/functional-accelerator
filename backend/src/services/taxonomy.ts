@@ -108,57 +108,32 @@ export interface ClassificationResult {
 }
 
 /**
- * Classify a single defect against the taxonomy.
- * Returns the cluster with the most keyword matches.
- * Ties broken by taxonomy order (more specific clusters are listed first).
- */
-export function classifyDefect(defect: {
-  title: string;
-  description: string;
-  module: string;
-  application: string;
-}): ClassificationResult {
-  const text = `${defect.title} ${defect.description} ${defect.module}`.toLowerCase();
-
-  let bestCluster: ClusterDef | null = null;
-  let bestMatches: string[] = [];
-
-  for (const cluster of DEFAULT_TAXONOMY) {
-    const matched = cluster.keywords.filter(kw => text.includes(kw.toLowerCase()));
-    if (matched.length > bestMatches.length) {
-      bestCluster = cluster;
-      bestMatches = matched;
-    }
-  }
-
-  if (bestCluster && bestMatches.length > 0) {
-    return {
-      clusterKey: bestCluster.key,
-      clusterName: bestCluster.name,
-      method: 'rule',
-      matchedKeywords: bestMatches,
-      confidence: Math.min(0.5 + bestMatches.length * 0.1, 0.95),
-    };
-  }
-
-  return {
-    clusterKey: 'other',
-    clusterName: 'Other',
-    method: 'unclassified',
-    matchedKeywords: [],
-    confidence: 0,
-  };
-}
-
-/**
  * Classify a batch of defects.
  * Returns one result per defect, in the same order.
+ * Optionally accepts a custom taxonomy (e.g. loaded from DB per-project).
  */
-export function classifyDefects(defects: Array<{
-  title: string;
-  description: string;
-  module: string;
-  application: string;
-}>): ClassificationResult[] {
-  return defects.map(d => classifyDefect(d));
+export function classifyDefects(
+  defects: Array<{ title: string; description: string; module: string; application: string }>,
+  customTaxonomy?: ClusterDef[]
+): ClassificationResult[] {
+  const taxonomy = customTaxonomy ?? DEFAULT_TAXONOMY;
+  return defects.map(defect => {
+    const text = `${defect.title} ${defect.description} ${defect.module}`.toLowerCase();
+    let bestCluster: ClusterDef | null = null;
+    let bestMatches: string[] = [];
+    for (const cluster of taxonomy) {
+      const matched = cluster.keywords.filter(kw => text.includes(kw.toLowerCase()));
+      if (matched.length > bestMatches.length) { bestCluster = cluster; bestMatches = matched; }
+    }
+    if (bestCluster && bestMatches.length > 0) {
+      return {
+        clusterKey: bestCluster.key,
+        clusterName: bestCluster.name,
+        method: 'rule' as const,
+        matchedKeywords: bestMatches,
+        confidence: Math.min(0.5 + bestMatches.length * 0.1, 0.95),
+      };
+    }
+    return { clusterKey: 'other', clusterName: 'Other', method: 'unclassified' as const, matchedKeywords: [], confidence: 0 };
+  });
 }
