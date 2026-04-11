@@ -191,6 +191,22 @@ db.exec(`
     FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE,
     UNIQUE(analysis_id, question_text)
   );
+
+  CREATE TABLE IF NOT EXISTS risk_overrides (
+    id TEXT PRIMARY KEY,
+    defect_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    original_priority TEXT NOT NULL,
+    overridden_priority TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (defect_id) REFERENCES defects(id) ON DELETE CASCADE,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    UNIQUE(defect_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_risk_overrides_project ON risk_overrides(project_id);
 `);
 
 // --- Migration: add progress_step to analyses if missing ---

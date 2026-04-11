@@ -120,13 +120,18 @@ router.get('/:projectId/:analysisId/clusters/:clusterKey/defects', (req: Request
         d.closed_date,
         d.environment,
         ca.method as classification_method,
-        ca.matched_keywords
+        ca.matched_keywords,
+        ro.id             as override_id,
+        ro.overridden_priority,
+        ro.reason         as override_reason,
+        ro.updated_at     as override_date
       FROM cluster_assignments ca
       JOIN defects d ON d.id = ca.defect_id
+      LEFT JOIN risk_overrides ro ON ro.defect_id = d.id
       WHERE ca.uat_analysis_id = ?
         AND ca.cluster_key = ?
       ORDER BY
-        CASE d.priority
+        CASE COALESCE(ro.overridden_priority, d.priority)
           WHEN 'Critical' THEN 1
           WHEN 'High'     THEN 2
           WHEN 'Medium'   THEN 3
@@ -370,6 +375,88 @@ router.get('/:projectId/defects/all', (req: Request, res: Response) => {
     res.json({ defects: rows, total, limit, offset });
   } catch {
     res.status(500).json({ error: 'Failed to fetch defects' });
+  }
+});
+
+// ─── GET /api/uat/:projectId/overrides — project-level audit trail ────────────
+router.get('/:projectId/overrides', (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params as { projectId: string };
+    const rows = db.prepare(`
+      SELECT
+        ro.id,
+        ro.defect_id,
+        ro.original_priority,
+        ro.overridden_priority,
+        ro.reason,
+        ro.created_at,
+        ro.updated_at,
+        d.external_id,
+        d.title,
+        d.application,
+        d.module
+      FROM risk_overrides ro
+      JOIN defects d ON d.id = ro.defect_id
+      WHERE ro.project_id = ?
+      ORDER BY ro.updated_at DESC
+    `).all(projectId);
+    res.json(rows);
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch overrides' });
+  }
+});
+
+// ─── POST /api/uat/:projectId/defects/:defectId/override — set override ───────
+router.post('/:projectId/defects/:defectId/override', (req: Request, res: Response) => {
+  try {
+    const { projectId, defectId } = req.params as { projectId: string; defectId: string };
+    const { overriddenPriority, reason } = req.body as { overriddenPriority: string; reason: string };
+
+    if (!overriddenPriority || !['Critical', 'High', 'Medium', 'Low'].includes(overriddenPriority)) {
+      return res.status(400).json({ error: 'overriddenPriority must be Critical, High, Medium, or Low' });
+    }
+    if (!reason?.trim()) {
+      return res.status(400).json({ error: 'reason is required' });
+    }
+
+    const defect = db.prepare(
+      'SELECT id, priority FROM defects WHERE id = ? AND project_id = ?'
+    ).get(defectId, projectId) as { id: string; priority: string } | undefined;
+    if (!defect) return res.status(404).json({ error: 'Defect not found' });
+
+    const existing = db.prepare('SELECT id FROM risk_overrides WHERE defect_id = ?').get(defectId) as { id: string } | undefined;
+    if (existing) {
+      db.prepare(`
+        UPDATE risk_overrides
+        SET overridden_priority = ?, reason = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `).run(overriddenPriority, reason.trim(), existing.id);
+    } else {
+      db.prepare(`
+        INSERT INTO risk_overrides (id, defect_id, project_id, original_priority, overridden_priority, reason)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(uuidv4(), defectId, projectId, defect.priority, overriddenPriority, reason.trim());
+    }
+
+    const saved = db.prepare('SELECT * FROM risk_overrides WHERE defect_id = ?').get(defectId);
+    res.json(saved);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Failed to save override';
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ─── DELETE /api/uat/:projectId/defects/:defectId/override — remove override ──
+router.delete('/:projectId/defects/:defectId/override', (req: Request, res: Response) => {
+  try {
+    const { projectId, defectId } = req.params as { projectId: string; defectId: string };
+    const defect = db.prepare('SELECT id FROM defects WHERE id = ? AND project_id = ?').get(defectId, projectId);
+    if (!defect) return res.status(404).json({ error: 'Defect not found' });
+
+    db.prepare('DELETE FROM risk_overrides WHERE defect_id = ?').run(defectId);
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ error: 'Failed to remove override' });
   }
 });
 

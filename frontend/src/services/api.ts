@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult, DefectRow, ClusterTrendData, ClusterConfig } from '../types';
+import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult, DefectRow, ClusterTrendData, ClusterConfig, AuditOverride } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -224,6 +224,18 @@ export const uatApi = {
   /** Re-classify all defects using the current (possibly updated) taxonomy */
   recluster: (projectId: string) =>
     api.post<{ message: string; runs: number }>(`/api/uat/${projectId}/recluster`).then(r => r.data),
+
+  /** Project-level audit trail: all risk overrides with defect context */
+  listOverrides: (projectId: string) =>
+    api.get<AuditOverride[]>(`/api/uat/${projectId}/overrides`).then(r => r.data),
+
+  /** Set or update a risk override for a specific defect */
+  setOverride: (projectId: string, defectId: string, overriddenPriority: string, reason: string) =>
+    api.post(`/api/uat/${projectId}/defects/${defectId}/override`, { overriddenPriority, reason }).then(r => r.data),
+
+  /** Remove the override for a specific defect (restores computed priority) */
+  deleteOverride: (projectId: string, defectId: string) =>
+    api.delete(`/api/uat/${projectId}/defects/${defectId}/override`).then(r => r.data),
 };
 
 export function parseUATResult(analysis: UATAnalysis): UATAnalysisResult | null {

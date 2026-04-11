@@ -144,6 +144,29 @@ export interface ClusterSummary {
   recommendation: string;
 }
 
+/** Risk override record attached to a defect */
+export interface RiskOverride {
+  override_id: string;
+  overridden_priority: 'Critical' | 'High' | 'Medium' | 'Low';
+  override_reason: string;
+  override_date: string;
+}
+
+/** Full override record returned by the project-level audit trail endpoint */
+export interface AuditOverride {
+  id: string;
+  defect_id: string;
+  original_priority: string;
+  overridden_priority: string;
+  reason: string;
+  created_at: string;
+  updated_at: string;
+  external_id: string;
+  title: string;
+  application: string;
+  module: string;
+}
+
 /** A defect row returned by the drill-down cluster endpoint */
 export interface DefectRow {
   id: string;
@@ -162,6 +185,11 @@ export interface DefectRow {
   environment: string;
   classification_method: 'rule' | 'unclassified';
   matched_keywords: string;
+  // override fields (null when no override)
+  override_id: string | null;
+  overridden_priority: 'Critical' | 'High' | 'Medium' | 'Low' | null;
+  override_reason: string | null;
+  override_date: string | null;
 }
 
 export interface UATAnalysisResult {

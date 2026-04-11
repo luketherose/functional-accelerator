@@ -15,6 +15,7 @@ import UATDashboard from '../components/UATDashboard';
 import UATTrend from '../components/UATTrend';
 import ClusterDrillDown from '../components/ClusterDrillDown';
 import TaxonomyEditor from '../components/TaxonomyEditor';
+import AuditTrail from '../components/AuditTrail';
 import PageHeader from '../components/Layout/PageHeader';
 
 function formatDate(iso: string) {
@@ -54,7 +55,7 @@ export default function ProjectDetailPage() {
   const [selectedUAT, setSelectedUAT] = useState<UATAnalysis | null>(null);
   const [uatUploading, setUatUploading] = useState(false);
   const [isUATRunning, setIsUATRunning] = useState(false);
-  const [uatTab, setUatTab] = useState<'overview' | 'trend' | 'defects'>('overview');
+  const [uatTab, setUatTab] = useState<'overview' | 'trend' | 'defects' | 'audit'>('overview');
   const [taxonomyOpen, setTaxonomyOpen] = useState(false);
 
   const load = useCallback(async () => {
@@ -558,6 +559,12 @@ export default function ProjectDetailPage() {
                   )}
                 </button>
                 <button
+                  onClick={() => setUatTab('audit')}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-all -mb-px ${uatTab === 'audit' ? 'border-purple-deep text-purple-deep' : 'border-transparent text-text-muted hover:text-text-primary'}`}
+                >
+                  <ShieldAlert size={12} /> Audit Trail
+                </button>
+                <button
                   onClick={() => setTaxonomyOpen(true)}
                   className="ml-auto flex items-center gap-1 px-2.5 py-1.5 text-[11px] text-text-muted hover:text-purple-deep hover:bg-surface-muted rounded-lg transition-colors my-auto"
                   title="Edit defect taxonomy"
@@ -633,6 +640,11 @@ export default function ProjectDetailPage() {
                     <p className="text-xs text-text-muted mt-1 max-w-xs">Run a UAT analysis to see defects grouped by cluster.</p>
                   </div>
                 </div>
+              )}
+
+              {/* Audit Trail tab */}
+              {uatTab === 'audit' && id && (
+                <AuditTrail projectId={id} />
               )}
             </div>
           </>

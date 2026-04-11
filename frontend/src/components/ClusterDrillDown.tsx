@@ -4,13 +4,14 @@
  * Three-level UI:
  *   Level 1 — Cluster grid: one card per taxonomy cluster
  *   Level 2 — Defect table: all defects in the selected cluster
- *   Level 3 — Defect drawer: full detail for a selected defect
+ *   Level 3 — Defect drawer: full detail + risk override for a selected defect
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import {
   ChevronRight, ChevronLeft, X, AlertTriangle, Info,
   Layers, FileSearch, Tag, User, Calendar, CheckCircle2,
+  ShieldAlert, Pencil, Trash2, Save, Loader2,
 } from 'lucide-react';
 import { uatApi } from '../services/api';
 import type { ClusterSummary, DefectRow, UATAnalysis } from '../types';
@@ -40,12 +41,25 @@ const PRIORITY_LABEL: Record<string, string> = {
   Unknown: 'text-slate-500 bg-slate-50 border border-slate-200',
 };
 
+const PRIORITIES = ['Critical', 'High', 'Medium', 'Low'] as const;
+
+function effectivePriority(d: DefectRow): string {
+  return d.overridden_priority ?? d.priority;
+}
+
 function riskScore(c: ClusterSummary) {
   return c.criticalCount * 4 + c.highCount * 2 + c.mediumCount;
 }
 
 function riskLevel(score: number): 'high' | 'medium' | 'low' {
   return score > 20 ? 'high' : score > 8 ? 'medium' : 'low';
+}
+
+function formatDate(iso: string) {
+  return new Date(iso).toLocaleDateString('it-IT', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
 }
 
 // ─── Cluster grid card ────────────────────────────────────────────────────────
@@ -65,7 +79,6 @@ function ClusterCard({ cluster, onClick }: { cluster: ClusterSummary; onClick: (
       onClick={onClick}
       className="card p-4 text-left hover:shadow-md hover:border-purple-200 transition-all group flex flex-col gap-3"
     >
-      {/* Header row */}
       <div className="flex items-start justify-between gap-2">
         <div>
           <p className="font-semibold text-text-primary text-sm leading-tight">{cluster.clusterName}</p>
@@ -79,7 +92,6 @@ function ClusterCard({ cluster, onClick }: { cluster: ClusterSummary; onClick: (
         </div>
       </div>
 
-      {/* Priority stacked bar */}
       <div className="flex h-1.5 rounded-full overflow-hidden gap-px bg-surface-border">
         {critPct > 0 && <div className="bg-red-500 rounded-full" style={{ width: `${critPct}%` }} />}
         {highPct > 0 && <div className="bg-orange-400 rounded-full" style={{ width: `${highPct}%` }} />}
@@ -87,7 +99,6 @@ function ClusterCard({ cluster, onClick }: { cluster: ClusterSummary; onClick: (
         {lowPct  > 0 && <div className="bg-green-400 rounded-full" style={{ width: `${lowPct}%` }} />}
       </div>
 
-      {/* Priority counts */}
       <div className="flex gap-3 text-[11px] text-text-muted">
         {cluster.criticalCount > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />{cluster.criticalCount} Crit</span>}
         {cluster.highCount     > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-400 inline-block" />{cluster.highCount} High</span>}
@@ -95,14 +106,12 @@ function ClusterCard({ cluster, onClick }: { cluster: ClusterSummary; onClick: (
         {cluster.lowCount      > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400 inline-block" />{cluster.lowCount} Low</span>}
       </div>
 
-      {/* Claude summary preview */}
       {cluster.claudeSummary && (
         <p className="text-xs text-text-secondary line-clamp-2 border-t border-surface-border pt-2">
           {cluster.claudeSummary}
         </p>
       )}
 
-      {/* Top apps */}
       {cluster.topApplications?.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {cluster.topApplications.map(app => (
@@ -119,6 +128,9 @@ function ClusterCard({ cluster, onClick }: { cluster: ClusterSummary; onClick: (
 // ─── Defect table row ─────────────────────────────────────────────────────────
 
 function DefectTableRow({ defect, onClick }: { defect: DefectRow; onClick: () => void }) {
+  const eff = effectivePriority(defect);
+  const isOverridden = !!defect.override_id;
+
   return (
     <tr
       onClick={onClick}
@@ -126,10 +138,20 @@ function DefectTableRow({ defect, onClick }: { defect: DefectRow; onClick: () =>
     >
       <td className="py-2.5 px-3 text-xs text-text-muted font-mono">{defect.external_id}</td>
       <td className="py-2.5 px-3">
-        <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-1.5 py-0.5 rounded ${PRIORITY_LABEL[defect.priority]}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${PRIORITY_DOT[defect.priority]}`} />
-          {defect.priority}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-1.5 py-0.5 rounded ${PRIORITY_LABEL[eff]}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${PRIORITY_DOT[eff]}`} />
+            {eff}
+          </span>
+          {isOverridden && (
+            <span
+              title={`Overridden from ${defect.priority} — ${defect.override_reason}`}
+              className="text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200 leading-none"
+            >
+              edited
+            </span>
+          )}
+        </div>
       </td>
       <td className="py-2.5 px-3 text-sm text-text-primary max-w-[360px]">
         <span className="line-clamp-1 group-hover:text-purple-deep transition-colors">{defect.title}</span>
@@ -153,23 +175,198 @@ function DefectTableRow({ defect, onClick }: { defect: DefectRow; onClick: () =>
   );
 }
 
+// ─── Override section inside the drawer ──────────────────────────────────────
+
+interface OverrideSectionProps {
+  defect: DefectRow;
+  projectId: string;
+  onChanged: (updated: Partial<DefectRow>) => void;
+}
+
+function OverrideSection({ defect, projectId, onChanged }: OverrideSectionProps) {
+  const isOverridden = !!defect.override_id;
+  const [editing, setEditing] = useState(false);
+  const [newPriority, setNewPriority] = useState<string>(defect.overridden_priority ?? defect.priority);
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSave = async () => {
+    if (!reason.trim() && !isOverridden) {
+      setError('Please provide a reason for the override.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      const saved = await uatApi.setOverride(projectId, defect.id, newPriority, reason.trim() || defect.override_reason || '');
+      onChanged({
+        override_id: (saved as { id: string }).id,
+        overridden_priority: newPriority as DefectRow['overridden_priority'],
+        override_reason: (saved as { reason: string }).reason,
+        override_date: (saved as { updated_at: string }).updated_at,
+      });
+      setEditing(false);
+      setReason('');
+    } catch {
+      setError('Failed to save override. Try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemove = async () => {
+    setRemoving(true);
+    setError('');
+    try {
+      await uatApi.deleteOverride(projectId, defect.id);
+      onChanged({ override_id: null, overridden_priority: null, override_reason: null, override_date: null });
+      setEditing(false);
+    } catch {
+      setError('Failed to remove override. Try again.');
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3 space-y-2">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
+          <ShieldAlert size={12} /> Risk Override
+        </p>
+        {!editing && (
+          <button
+            onClick={() => { setEditing(true); setNewPriority(defect.overridden_priority ?? defect.priority); setReason(''); }}
+            className="flex items-center gap-1 text-[10px] text-amber-700 hover:text-amber-900 font-medium"
+          >
+            <Pencil size={10} /> {isOverridden ? 'Edit' : 'Override'}
+          </button>
+        )}
+      </div>
+
+      {/* Current override status */}
+      {isOverridden && !editing && (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2 text-xs">
+            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border line-through opacity-60 ${PRIORITY_LABEL[defect.priority]}`}>
+              {defect.priority}
+            </span>
+            <span className="text-amber-600">→</span>
+            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${PRIORITY_LABEL[defect.overridden_priority!]}`}>
+              {defect.overridden_priority}
+            </span>
+          </div>
+          <p className="text-[11px] text-amber-700 italic">"{defect.override_reason}"</p>
+          <p className="text-[10px] text-text-muted">
+            Last updated: {defect.override_date ? formatDate(defect.override_date) : '—'}
+          </p>
+          <button
+            onClick={handleRemove}
+            disabled={removing}
+            className="flex items-center gap-1 text-[10px] text-red-500 hover:text-red-700 font-medium disabled:opacity-50"
+          >
+            {removing ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
+            Remove override
+          </button>
+        </div>
+      )}
+
+      {!isOverridden && !editing && (
+        <p className="text-[11px] text-amber-700">
+          Computed priority: <strong>{defect.priority}</strong>.
+          Override if the ALM priority doesn't reflect the actual business risk.
+        </p>
+      )}
+
+      {/* Edit form */}
+      {editing && (
+        <div className="space-y-2 pt-1">
+          <div>
+            <label className="text-[10px] font-medium text-text-muted block mb-1">New priority</label>
+            <div className="flex gap-1.5 flex-wrap">
+              {PRIORITIES.map(p => (
+                <button
+                  key={p}
+                  onClick={() => setNewPriority(p)}
+                  className={`text-[11px] px-2.5 py-1 rounded-full border font-medium transition-colors ${
+                    newPriority === p
+                      ? PRIORITY_LABEL[p] + ' ring-1 ring-offset-1 ring-amber-400'
+                      : 'border-surface-border text-text-muted hover:border-amber-300'
+                  }`}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-medium text-text-muted block mb-1">
+              Reason <span className="text-red-400">*</span>
+            </label>
+            <textarea
+              className="input text-xs resize-none w-full"
+              rows={2}
+              placeholder="e.g. Business impact higher than ALM priority suggests — affects end-of-day settlement"
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+            />
+          </div>
+
+          {error && <p className="text-[11px] text-red-500">{error}</p>}
+
+          <div className="flex gap-2">
+            <button
+              onClick={handleSave}
+              disabled={saving || (!reason.trim() && !isOverridden)}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-purple-deep text-white font-medium disabled:opacity-40 hover:bg-purple-900 transition-colors"
+            >
+              {saving ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+              {saving ? 'Saving…' : 'Save override'}
+            </button>
+            <button
+              onClick={() => { setEditing(false); setError(''); }}
+              className="text-xs px-3 py-1.5 rounded-lg border border-surface-border text-text-secondary hover:bg-surface-muted transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Defect detail drawer ─────────────────────────────────────────────────────
 
-function DefectDrawer({ defect, onClose }: { defect: DefectRow; onClose: () => void }) {
+interface DefectDrawerProps {
+  defect: DefectRow;
+  projectId: string;
+  onClose: () => void;
+  onOverrideChange: (defectId: string, patch: Partial<DefectRow>) => void;
+}
+
+function DefectDrawer({ defect, projectId, onClose, onOverrideChange }: DefectDrawerProps) {
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
-      {/* Backdrop */}
       <div className="absolute inset-0 bg-black/20" onClick={onClose} />
 
-      {/* Panel */}
       <div className="relative z-10 w-[520px] max-w-full h-full bg-white shadow-2xl flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-start justify-between gap-3 p-4 border-b border-surface-border bg-surface-muted/30 shrink-0">
           <div className="min-w-0">
             <div className="flex items-center gap-2 mb-1">
-              <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded ${PRIORITY_LABEL[defect.priority]}`}>
-                {defect.priority}
+              <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded ${PRIORITY_LABEL[effectivePriority(defect)]}`}>
+                {effectivePriority(defect)}
               </span>
+              {defect.override_id && (
+                <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200">
+                  overridden
+                </span>
+              )}
               <span className="text-xs text-text-muted font-mono">{defect.external_id}</span>
             </div>
             <p className="text-sm font-semibold text-text-primary leading-snug">{defect.title}</p>
@@ -192,6 +389,13 @@ function DefectDrawer({ defect, onClose }: { defect: DefectRow; onClose: () => v
             <MetaField icon={<Calendar size={12} />} label="Detected on" value={defect.detected_date || '—'} />
             <MetaField icon={<Calendar size={12} />} label="Closed on" value={defect.closed_date || '—'} />
           </div>
+
+          {/* Risk override */}
+          <OverrideSection
+            defect={defect}
+            projectId={projectId}
+            onChanged={patch => onOverrideChange(defect.id, patch)}
+          />
 
           {/* Classification */}
           {defect.matched_keywords && (
@@ -237,9 +441,7 @@ function DefectDrawer({ defect, onClose }: { defect: DefectRow; onClose: () => v
 function MetaField({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
     <div>
-      <p className="text-[10px] text-text-muted flex items-center gap-1 mb-0.5">
-        {icon} {label}
-      </p>
+      <p className="text-[10px] text-text-muted flex items-center gap-1 mb-0.5">{icon} {label}</p>
       <p className="text-xs text-text-primary font-medium">{value}</p>
     </div>
   );
@@ -259,11 +461,9 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
   const [selectedDefect, setSelectedDefect] = useState<DefectRow | null>(null);
   const [filterPriority, setFilterPriority] = useState<string | null>(null);
 
-  // Derive cluster summaries from result_json
   const result = parseUATResult(analysis);
   const clusters: ClusterSummary[] = result?.clusterSummaries ?? [];
 
-  // Load defects when a cluster is selected
   const loadClusterDefects = useCallback(async (clusterKey: string) => {
     setLoadingDefects(true);
     setDefects([]);
@@ -284,6 +484,12 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
     }
   }, [selectedCluster, loadClusterDefects]);
 
+  // Patch a defect in local state after an override change
+  const handleOverrideChange = useCallback((defectId: string, patch: Partial<DefectRow>) => {
+    setDefects(prev => prev.map(d => d.id === defectId ? { ...d, ...patch } : d));
+    setSelectedDefect(prev => prev?.id === defectId ? { ...prev, ...patch } : prev);
+  }, []);
+
   // ── Empty state ──────────────────────────────────────────────────────────────
   if (clusters.length === 0) {
     return (
@@ -302,18 +508,19 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
   // ── Level 2: defect table ────────────────────────────────────────────────────
   if (selectedCluster) {
     const filteredDefects = filterPriority
-      ? defects.filter(d => d.priority === filterPriority)
+      ? defects.filter(d => effectivePriority(d) === filterPriority)
       : defects;
 
     const priorityCounts = defects.reduce<Record<string, number>>((acc, d) => {
-      acc[d.priority] = (acc[d.priority] || 0) + 1;
+      const p = effectivePriority(d);
+      acc[p] = (acc[p] || 0) + 1;
       return acc;
     }, {});
 
     return (
       <>
         <div className="flex flex-col h-full">
-          {/* Breadcrumb + back */}
+          {/* Breadcrumb */}
           <div className="flex items-center gap-2 px-4 py-3 border-b border-surface-border bg-surface-muted/30 shrink-0">
             <button
               onClick={() => setSelectedCluster(null)}
@@ -369,6 +576,11 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
                 </button>
               );
             })}
+            {defects.some(d => d.override_id) && (
+              <span className="ml-auto text-[10px] text-amber-600 flex items-center gap-1">
+                <ShieldAlert size={10} /> {defects.filter(d => d.override_id).length} overridden
+              </span>
+            )}
           </div>
 
           {/* Defect table */}
@@ -407,7 +619,12 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
 
         {/* Detail drawer */}
         {selectedDefect && (
-          <DefectDrawer defect={selectedDefect} onClose={() => setSelectedDefect(null)} />
+          <DefectDrawer
+            defect={selectedDefect}
+            projectId={projectId}
+            onClose={() => setSelectedDefect(null)}
+            onOverrideChange={handleOverrideChange}
+          />
         )}
       </>
     );
@@ -417,7 +634,6 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
   return (
     <div className="overflow-y-auto h-full">
       <div className="p-4">
-        {/* Summary bar */}
         <div className="flex items-center gap-4 mb-4 p-3 rounded-lg bg-surface-muted/50 border border-surface-border text-xs text-text-secondary">
           <span className="flex items-center gap-1.5">
             <Layers size={12} className="text-purple-deep" />
@@ -434,7 +650,6 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
           <span className="ml-auto text-text-muted">Click a cluster to drill down</span>
         </div>
 
-        {/* Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {clusters.map(cluster => (
             <ClusterCard
