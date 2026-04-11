@@ -176,3 +176,139 @@ export interface AnalysisResult {
   assumptions: string[];
   openQuestions: string[];
 }
+
+// ─── Functional Gap Analysis Engine Types ────────────────────────────────────
+
+export type FunctionalComponentType =
+  | 'process'
+  | 'business_rule'
+  | 'input'
+  | 'output'
+  | 'validation'
+  | 'integration'
+  | 'ui_element';
+
+export type FunctionalExtractionStatus = 'pending' | 'extracting' | 'ready' | 'error';
+
+export type FunctionalRunStatus =
+  | 'pending'
+  | 'extracting'
+  | 'aligning'
+  | 'detecting'
+  | 'verifying'
+  | 'done'
+  | 'error';
+
+export type GapType = 'unchanged' | 'modified' | 'missing' | 'new';
+
+export type GapStatus = 'pending' | 'confirmed' | 'rejected';
+
+export type RelationshipType = 'triggers' | 'produces' | 'validates' | 'calls' | 'depends_on';
+
+export type MatchType = 'confirmed' | 'rejected' | 'unmatched_asis' | 'unmatched_tobe';
+
+export interface DocumentVersion {
+  id: string;
+  file_id: string;
+  version_number: number;
+  version_label: string | null;
+  status: FunctionalExtractionStatus;
+  extracted_at: string | null;
+  created_at: string;
+}
+
+export interface FunctionalComponent {
+  id: string;
+  document_version_id: string;
+  type: FunctionalComponentType;
+  title: string;
+  description: string;
+  condition_text: string | null;
+  action_text: string | null;
+  source_section: string;
+  source_quote: string;
+  confidence: number;
+  created_at: string;
+}
+
+export interface ComponentRelationship {
+  id: string;
+  from_component_id: string;
+  to_component_id: string;
+  relationship_type: RelationshipType;
+  source_quote: string;
+  created_at: string;
+}
+
+export interface FunctionalAnalysisRun {
+  id: string;
+  project_id: string;
+  as_is_version_ids: string[];
+  to_be_version_ids: string[];
+  status: FunctionalRunStatus;
+  progress_step: string | null;
+  alignment_threshold: number;
+  extraction_prompt_hash: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface AlignmentPair {
+  id: string;
+  run_id: string;
+  as_is_component_id: string | null;
+  to_be_component_id: string | null;
+  match_type: MatchType;
+  confidence: number | null;
+  match_reason: string | null;
+}
+
+export interface FieldDiff {
+  field: string;
+  as_is_value: string;
+  to_be_value: string;
+}
+
+export interface FunctionalGap {
+  id: string;
+  run_id: string;
+  alignment_pair_id: string;
+  gap_type: GapType;
+  status: GapStatus;
+  field_diffs: FieldDiff[];
+  as_is_quote: string | null;
+  to_be_quote: string | null;
+  as_is_section: string | null;
+  to_be_section: string | null;
+  explanation: string | null;
+  confidence: number | null;
+  verification_reason: string | null;
+  created_at: string;
+}
+
+export interface GapImpact {
+  id: string;
+  gap_id: string;
+  affected_component_id: string;
+  relationship_path: string[];
+  impact_type: string;
+}
+
+export interface CoverageReport {
+  id: string;
+  run_id: string;
+  total_as_is_components: number;
+  unchanged_count: number;
+  modified_count: number;
+  missing_count: number;
+  new_count: number;
+  coverage_score: number;
+  created_at: string;
+}
+
+export interface FunctionalRunDetail extends FunctionalAnalysisRun {
+  gaps: FunctionalGap[];
+  coverage: CoverageReport | null;
+  as_is_component_count: number;
+  to_be_component_count: number;
+}

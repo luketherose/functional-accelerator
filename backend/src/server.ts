@@ -11,6 +11,7 @@ import filesRouter from './routes/files';
 import analysisRouter from './routes/analysis';
 import riskRouter from './routes/risk';
 import uatRouter from './routes/uat';
+import functionalRouter from './routes/functional';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -29,6 +30,7 @@ app.use('/api/files', filesRouter);
 app.use('/api/analysis', analysisRouter);
 app.use('/api/risk', riskRouter);
 app.use('/api/uat', uatRouter);
+app.use('/api/functional', functionalRouter);
 
 // --- Error handler ---
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {

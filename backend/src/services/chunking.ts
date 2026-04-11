@@ -153,3 +153,12 @@ export function formatAllChunks(chunks: Chunk[], label: string, charBudget = 120
     `**[${c.docName} — ${c.sectionPath}]**\n${c.content}`
   ).join('\n\n---\n\n');
 }
+
+/**
+ * Entry point for semantic chunking used by the functional extraction pipeline.
+ * Delegates to chunkDocument(); exists as a named seam so future iterations can
+ * swap in larger chunk sizes or different boundary detection without touching callers.
+ */
+export function semanticChunk(text: string, docName: string, docType: import('../types').FileBucket): Chunk[] {
+  return chunkDocument(text, docName, docType);
+}

@@ -209,6 +209,127 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_risk_overrides_project ON risk_overrides(project_id);
 `);
 
+// --- Functional Gap Analysis Engine tables ---
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS document_versions (
+    id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    version_number INTEGER NOT NULL DEFAULT 1,
+    version_label TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    extracted_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(file_id, version_number)
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS functional_components (
+    id TEXT PRIMARY KEY,
+    document_version_id TEXT NOT NULL REFERENCES document_versions(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    condition_text TEXT,
+    action_text TEXT,
+    source_section TEXT NOT NULL,
+    source_quote TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 1.0,
+    embedding BLOB,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS component_relationships (
+    id TEXT PRIMARY KEY,
+    from_component_id TEXT NOT NULL REFERENCES functional_components(id) ON DELETE CASCADE,
+    to_component_id TEXT NOT NULL REFERENCES functional_components(id) ON DELETE CASCADE,
+    relationship_type TEXT NOT NULL,
+    source_quote TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS functional_analysis_runs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    as_is_version_ids TEXT NOT NULL DEFAULT '[]',
+    to_be_version_ids TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'pending',
+    progress_step TEXT,
+    alignment_threshold REAL NOT NULL DEFAULT 0.75,
+    extraction_prompt_hash TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS alignment_pairs (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES functional_analysis_runs(id) ON DELETE CASCADE,
+    as_is_component_id TEXT REFERENCES functional_components(id),
+    to_be_component_id TEXT REFERENCES functional_components(id),
+    match_type TEXT NOT NULL,
+    confidence REAL,
+    match_reason TEXT
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS functional_gaps (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES functional_analysis_runs(id) ON DELETE CASCADE,
+    alignment_pair_id TEXT NOT NULL REFERENCES alignment_pairs(id),
+    gap_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    field_diffs TEXT,
+    as_is_quote TEXT,
+    to_be_quote TEXT,
+    as_is_section TEXT,
+    to_be_section TEXT,
+    explanation TEXT,
+    confidence REAL,
+    verification_reason TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS gap_impacts (
+    id TEXT PRIMARY KEY,
+    gap_id TEXT NOT NULL REFERENCES functional_gaps(id) ON DELETE CASCADE,
+    affected_component_id TEXT NOT NULL REFERENCES functional_components(id),
+    relationship_path TEXT NOT NULL DEFAULT '[]',
+    impact_type TEXT NOT NULL DEFAULT 'downstream'
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS coverage_reports (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL UNIQUE REFERENCES functional_analysis_runs(id) ON DELETE CASCADE,
+    total_as_is_components INTEGER NOT NULL DEFAULT 0,
+    unchanged_count INTEGER NOT NULL DEFAULT 0,
+    modified_count INTEGER NOT NULL DEFAULT 0,
+    missing_count INTEGER NOT NULL DEFAULT 0,
+    new_count INTEGER NOT NULL DEFAULT 0,
+    coverage_score REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )
+`);
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_functional_runs_project ON functional_analysis_runs(project_id);
+  CREATE INDEX IF NOT EXISTS idx_functional_components_version ON functional_components(document_version_id);
+  CREATE INDEX IF NOT EXISTS idx_alignment_pairs_run ON alignment_pairs(run_id);
+  CREATE INDEX IF NOT EXISTS idx_functional_gaps_run ON functional_gaps(run_id);
+  CREATE INDEX IF NOT EXISTS idx_gap_impacts_gap ON gap_impacts(gap_id);
+`);
+
 // --- Migration: add progress_step to analyses if missing ---
 const analysesCols = db.prepare("PRAGMA table_info(analyses)").all() as { name: string }[];
 if (analysesCols.length > 0 && !analysesCols.find(c => c.name === 'progress_step')) {

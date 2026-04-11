@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult, DefectRow, ClusterTrendData, ClusterConfig, AuditOverride, SuggestClustersResult, RunComparisonData, AIChatMessage } from '../types';
+import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult, DefectRow, ClusterTrendData, ClusterConfig, AuditOverride, SuggestClustersResult, RunComparisonData, AIChatMessage, DocumentVersion, FunctionalComponent, FunctionalAnalysisRun, FunctionalRunDetail, FunctionalGap, CoverageReport, GapImpact } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -269,5 +269,39 @@ export function parseAnalysisResult(analysis: Analysis): AnalysisResult | null {
     return null;
   }
 }
+
+// ─── Functional Gap Analysis API ─────────────────────────────────────────────
+
+export const functionalApi = {
+  listVersions: (projectId: string) =>
+    api.get<DocumentVersion[]>(`/api/functional/${projectId}/versions`).then(r => r.data),
+
+  createVersion: (projectId: string, fileId: string, versionLabel?: string) =>
+    api.post<DocumentVersion>(`/api/functional/${projectId}/versions`, { file_id: fileId, version_label: versionLabel }).then(r => r.data),
+
+  listComponents: (projectId: string, versionId: string, type?: string) =>
+    api.get<FunctionalComponent[]>(`/api/functional/${projectId}/versions/${versionId}/components`, { params: type ? { type } : undefined }).then(r => r.data),
+
+  listRuns: (projectId: string) =>
+    api.get<FunctionalAnalysisRun[]>(`/api/functional/${projectId}/runs`).then(r => r.data),
+
+  createRun: (projectId: string, asIsVersionIds: string[], toBeVersionIds: string[]) =>
+    api.post<FunctionalAnalysisRun>(`/api/functional/${projectId}/runs`, { as_is_version_ids: asIsVersionIds, to_be_version_ids: toBeVersionIds }).then(r => r.data),
+
+  getRun: (projectId: string, runId: string) =>
+    api.get<FunctionalRunDetail>(`/api/functional/${projectId}/runs/${runId}`).then(r => r.data),
+
+  listGaps: (projectId: string, runId: string, filters?: { gap_type?: string; min_confidence?: number }) =>
+    api.get<FunctionalGap[]>(`/api/functional/${projectId}/runs/${runId}/gaps`, { params: filters }).then(r => r.data),
+
+  getCoverage: (projectId: string, runId: string) =>
+    api.get<CoverageReport>(`/api/functional/${projectId}/runs/${runId}/coverage`).then(r => r.data),
+
+  getGapImpacts: (projectId: string, runId: string, gapId: string) =>
+    api.get<GapImpact[]>(`/api/functional/${projectId}/runs/${runId}/gaps/${gapId}/impacts`).then(r => r.data),
+
+  deleteRun: (projectId: string, runId: string) =>
+    api.delete(`/api/functional/${projectId}/runs/${runId}`).then(r => r.data),
+};
 
 export default api;

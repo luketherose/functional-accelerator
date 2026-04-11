@@ -554,3 +554,110 @@ Return ONLY raw JSON with this exact schema:
 --- VERIFIED DELTAS ---
 ${JSON.stringify(deltas, null, 2)}`;
 }
+
+// ─── Functional Gap Analysis Prompts ─────────────────────────────────────────
+
+export function buildFunctionalExtractionSystemPrompt(): string {
+  return `You are a functional specification analyst. Your ONLY task is to extract explicitly stated functional components from the document text provided.
+
+STRICT RULES:
+1. Extract ONLY what is explicitly written in the text. Do NOT infer, assume, or complete.
+2. For EVERY component you emit, you MUST provide source_quote: the verbatim sentence(s) from the document that directly state this component.
+3. If you cannot provide a verbatim source_quote from the provided text, do NOT emit the component.
+4. confidence must reflect how clearly the text states this component (0.0 = unclear, 1.0 = explicitly stated).
+5. Reject components where confidence < 0.7.
+6. Return raw JSON only. No markdown fences, no prose.
+
+COMPONENT TYPES:
+- process: A business process or workflow step
+- business_rule: A named rule with condition/action (e.g. "If X, then Y")
+- input: Data or information entering a process
+- output: Data or information produced by a process
+- validation: A constraint or check on data
+- integration: An external system interaction
+- ui_element: A screen, form, field, or UI component
+
+OUTPUT SCHEMA:
+{
+  "components": [
+    {
+      "type": "process|business_rule|input|output|validation|integration|ui_element",
+      "title": "Short canonical name (5-10 words max)",
+      "description": "One sentence describing what this component does, based strictly on the text",
+      "condition": "For business_rule only: the triggering condition (verbatim or near-verbatim)",
+      "action": "For business_rule only: the resulting action (verbatim or near-verbatim)",
+      "source_section": "The section heading where this was found",
+      "source_quote": "The exact verbatim sentence(s) from the document that state this component",
+      "confidence": 0.0
+    }
+  ]
+}`;
+}
+
+export function buildFunctionalExtractionUserPrompt(sectionPath: string, chunkText: string): string {
+  return `Extract all functional components from the following document section.
+
+SECTION: ${sectionPath}
+
+TEXT:
+${chunkText}`;
+}
+
+export function buildRelationshipExtractionPrompt(componentsJson: string, chunkText: string): string {
+  return `You are given a list of already-extracted functional components. Identify explicit relationships between them.
+
+A relationship exists ONLY if the document text explicitly states or implies a dependency, trigger, or data flow between two components. Do not create relationships based on intuition.
+
+OUTPUT SCHEMA:
+{
+  "relationships": [
+    {
+      "from_component_title": "exact title of source component",
+      "to_component_title": "exact title of target component",
+      "relationship_type": "triggers|produces|validates|calls|depends_on",
+      "source_quote": "verbatim text establishing this relationship"
+    }
+  ]
+}
+
+COMPONENTS:
+${componentsJson}
+
+TEXT:
+${chunkText}`;
+}
+
+export function buildAlignmentConfirmationPrompt(asIsJson: string, toBeJson: string): string {
+  return `You are performing functional specification alignment. Determine if the AS-IS and TO-BE components describe the same functional concept.
+
+RESPOND WITH ONLY: { "match": true|false, "confidence": 0.0-1.0, "reason": "one sentence" }
+
+No additional text.
+
+AS-IS COMPONENT:
+${asIsJson}
+
+TO-BE CANDIDATE:
+${toBeJson}`;
+}
+
+export function buildVerificationPrompt(gapsJson: string): string {
+  return `You are a quality reviewer for a functional gap analysis. Review each gap and determine if it is genuinely supported by the quoted evidence.
+
+For each gap:
+- If the as_is_quote and to_be_quote clearly demonstrate the stated gap_type: verdict = "confirmed"
+- If the gap is NOT supported by the quotes, or quotes are missing/irrelevant: verdict = "rejected"
+- Apply a strict standard. When in doubt, reject.
+
+OUTPUT SCHEMA:
+{
+  "reviews": [
+    { "gap_index": 0, "verdict": "confirmed|rejected", "reason": "one sentence" }
+  ]
+}
+
+Return raw JSON only. No prose.
+
+GAPS:
+${gapsJson}`;
+}

@@ -6,8 +6,8 @@ import {
   Clock, CheckCircle2, AlertCircle, FileText, History,
   Pencil, X, Check, Database, ShieldAlert, Upload, BarChart2, Settings2, GitCompare, Sparkles
 } from 'lucide-react';
-import type { ProjectDetail, Analysis, FileBucket, UATAnalysis } from '../types';
-import { projectsApi, analysisApi, filesApi, uatApi, parseAnalysisResult, parseUATResult } from '../services/api';
+import type { ProjectDetail, Analysis, FileBucket, UATAnalysis, FunctionalAnalysisRun } from '../types';
+import { projectsApi, analysisApi, filesApi, uatApi, parseAnalysisResult, parseUATResult, functionalApi } from '../services/api';
 import FileUploader from '../components/FileUploader';
 import FileList from '../components/FileList';
 import AnalysisTabs from '../components/AnalysisTabs';
@@ -20,6 +20,10 @@ import AuditTrail from '../components/AuditTrail';
 import RunComparison from '../components/RunComparison';
 import AIDefectChat from '../components/AIDefectChat';
 import PageHeader from '../components/Layout/PageHeader';
+import KnowledgeBaseManager from '../components/KnowledgeBaseManager';
+import GapExplorer from '../components/GapExplorer';
+import FunctionalAnalysisProgress from '../components/FunctionalAnalysisProgress';
+import VersionTimeline from '../components/VersionTimeline';
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-GB', {
@@ -27,7 +31,7 @@ function formatDate(iso: string) {
   });
 }
 
-type ActiveView = 'analysis' | 'uat';
+type ActiveView = 'analysis' | 'uat' | 'functional';
 type AnalysisPanel = 'documents' | 'history';
 
 export default function ProjectDetailPage() {
@@ -62,6 +66,10 @@ export default function ProjectDetailPage() {
   const [uatTab, setUatTab] = useState<'overview' | 'trend' | 'compare' | 'defects' | 'audit' | 'ai'>('overview');
   const [taxonomyOpen, setTaxonomyOpen] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+
+  // Functional Gap Analysis state
+  const [functionalRuns, setFunctionalRuns] = useState<FunctionalAnalysisRun[]>([]);
+  const [selectedFunctionalRun, setSelectedFunctionalRun] = useState<FunctionalAnalysisRun | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -156,6 +164,33 @@ export default function ProjectDetailPage() {
     if (selectedUAT?.id === analysisId) setSelectedUAT(null);
     setUatAnalyses(await uatApi.list(id));
   };
+
+  // Load functional runs when project loads
+  useEffect(() => {
+    if (!project) return;
+    functionalApi.listRuns(project.id)
+      .then(runs => {
+        setFunctionalRuns(runs);
+        const doneRun = runs.find(r => r.status === 'done');
+        if (doneRun && !selectedFunctionalRun) setSelectedFunctionalRun(doneRun);
+      })
+      .catch(() => {});
+  }, [project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll while a functional run is in progress
+  useEffect(() => {
+    const activeRun = functionalRuns.find(r => r.status !== 'done' && r.status !== 'error');
+    if (!activeRun || !project) return;
+    const id = setInterval(async () => {
+      try {
+        const runs = await functionalApi.listRuns(project.id);
+        setFunctionalRuns(runs);
+        const wasActive = runs.find(r => r.id === activeRun.id);
+        if (wasActive?.status === 'done') setSelectedFunctionalRun(wasActive);
+      } catch { /* keep polling */ }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [functionalRuns, project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (isAnalyzing && id) {
@@ -296,6 +331,20 @@ export default function ProjectDetailPage() {
           Risk Analysis
           {uatAnalyses.length > 0 && (
             <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{uatAnalyses.length}</span>
+          )}
+        </button>
+        <button
+          onClick={() => setActiveView('functional')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-all -mb-px ${
+            activeView === 'functional'
+              ? 'border-purple-deep text-purple-deep'
+              : 'border-transparent text-text-muted hover:text-text-primary'
+          }`}
+        >
+          <GitCompare size={14} />
+          {t('projectDetail.functionalTab')}
+          {functionalRuns.length > 0 && (
+            <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{functionalRuns.length}</span>
           )}
         </button>
       </div>
@@ -470,6 +519,48 @@ export default function ProjectDetailPage() {
               )}
             </div>
           </>
+        )}
+
+        {/* ── FUNCTIONAL GAP ANALYSIS VIEW ── */}
+        {activeView === 'functional' && (
+          <div className="flex flex-1 overflow-hidden gap-0">
+            <div className="w-80 xl:w-96 shrink-0 border-r border-surface-border overflow-y-auto bg-white p-5 space-y-6">
+              <KnowledgeBaseManager
+                projectId={project.id}
+                files={project.files}
+                onVersionCreated={() => functionalApi.listRuns(project.id).then(setFunctionalRuns).catch(() => {})}
+              />
+              <VersionTimeline
+                runs={functionalRuns}
+                selectedRunId={selectedFunctionalRun?.id ?? null}
+                onSelectRun={setSelectedFunctionalRun}
+                onDeleteRun={async (runId) => {
+                  await functionalApi.deleteRun(project.id, runId).catch(() => {});
+                  const runs = await functionalApi.listRuns(project.id).catch(() => []);
+                  setFunctionalRuns(runs);
+                  if (selectedFunctionalRun?.id === runId) setSelectedFunctionalRun(null);
+                }}
+              />
+            </div>
+            <div className="flex-1 overflow-hidden flex flex-col">
+              {(() => {
+                const activeRun = functionalRuns.find(r => r.status !== 'done' && r.status !== 'error');
+                if (activeRun) return <FunctionalAnalysisProgress progressStep={activeRun.progress_step ?? null} />;
+                if (!selectedFunctionalRun) return (
+                  <div className="flex-1 flex flex-col items-center justify-center gap-4 text-text-muted">
+                    <div className="w-16 h-16 rounded-2xl bg-surface border-2 border-dashed border-surface-border flex items-center justify-center">
+                      <GitCompare size={22} className="text-text-muted" />
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm font-medium text-text-primary">{t('projectDetail.functionalEmpty')}</p>
+                      <p className="text-xs text-text-muted mt-1 max-w-xs">{t('projectDetail.functionalEmptyHint')}</p>
+                    </div>
+                  </div>
+                );
+                return <GapExplorer projectId={project.id} runId={selectedFunctionalRun.id} />;
+              })()}
+            </div>
+          </div>
         )}
 
         {/* ── RISK ANALYSIS VIEW ── */}
