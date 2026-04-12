@@ -5,6 +5,7 @@ import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../db';
 import { callClaudeJson } from '../services/claude';
+import { sanitizeContext } from '../utils/sanitize';
 
 const router = Router();
 
@@ -68,8 +69,8 @@ router.post('/:projectId/run', tmpUpload.single('file'), async (req: Request, re
       targetContext?: string;
     };
 
-    const src = (sourceContext || '').trim() || project.name;
-    const tgt = (targetContext || '').trim() || 'target deployment';
+    const src = sanitizeContext(sourceContext, project.name);
+    const tgt = sanitizeContext(targetContext, 'target deployment');
 
     const count = (
       db.prepare('SELECT COUNT(*) as c FROM risk_assessments WHERE project_id = ?').get(projectId) as { c: number }
@@ -133,12 +134,26 @@ async function runRiskAssessmentAsync(
       const text = fs.readFileSync(tmpFilePath, 'utf-8');
       rows = parseCsvToRows(text);
     } else {
-      // Excel
-      const XLSX = require('xlsx') as typeof import('xlsx');
-      const workbook = XLSX.readFile(tmpFilePath);
-      const sheetName = workbook.SheetNames[0];
-      const sheet = workbook.Sheets[sheetName];
-      rows = XLSX.utils.sheet_to_json<DefectRow>(sheet);
+      // Excel — H3 fix: use exceljs instead of vulnerable xlsx
+      const ExcelJS = require('exceljs') as typeof import('exceljs');
+      const workbook = new ExcelJS.default.Workbook();
+      await workbook.xlsx.readFile(tmpFilePath);
+      const worksheet = workbook.worksheets[0];
+      if (worksheet) {
+        const headers: string[] = [];
+        worksheet.getRow(1).eachCell({ includeEmpty: true }, (cell, colNumber) => {
+          headers[colNumber] = cell.text?.trim() || `Column${colNumber}`;
+        });
+        worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+          if (rowNumber === 1) return;
+          const obj: DefectRow = {};
+          row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+            const header = headers[colNumber];
+            if (header) obj[header] = cell.text ?? '';
+          });
+          rows.push(obj);
+        });
+      }
     }
 
     const defectCount = rows.length;
