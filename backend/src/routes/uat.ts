@@ -9,7 +9,9 @@ import { parseALMExcelAsync } from '../services/almParser';
 import { runUATPipeline } from '../services/uatPipeline';
 import { DEFAULT_TAXONOMY, classifyDefects } from '../services/taxonomy';
 import { suggestClusters } from '../services/clusterSuggestions';
+
 import { sanitizeMessage, sanitizeHistory } from '../utils/sanitize';
+import { callClaudeChat } from '../services/claude';
 import type { UATAnalysis } from '../types';
 
 const router = Router();
@@ -221,7 +223,8 @@ router.get('/:projectId/taxonomy', (req: Request, res: Response) => {
     if (rows.length > 0) {
       res.json(rows.map(r => {
         let keywords: string[] = [];
-        try { keywords = JSON.parse(r.keywords); } catch { /* malformed DB row — treat as empty */ }
+
+        try { keywords = JSON.parse(r.keywords) as string[]; } catch { /* malformed DB row — treat as empty */ }
         return { ...r, keywords };
       }));
     } else {
@@ -288,7 +291,7 @@ router.post('/:projectId/recluster', async (req: Request, res: Response) => {
     const taxonomy = configRows.length > 0
       ? configRows.map(r => {
           let keywords: string[] = [];
-          try { keywords = JSON.parse(r.keywords) as string[]; } catch { /* keep empty */ }
+          try { keywords = JSON.parse(r.keywords) as string[]; } catch { console.error(`[uat] corrupted keywords for cluster ${r.cluster_key}`); }
           return { key: r.cluster_key, name: r.cluster_name, keywords };
         })
       : DEFAULT_TAXONOMY.map(c => ({ key: c.key, name: c.name, keywords: c.keywords }));
@@ -731,7 +734,6 @@ ${executiveSummary ? `## Pipeline Executive Summary\n${executiveSummary}` : ''}
 - Reply in the same language as the user's message (Italian if Italian, English if English).
 - Do NOT invent data — if something is not in the context above, say so.`;
 
-    const { callClaudeChat } = await import('../services/claude');
     const response = await callClaudeChat(systemPrompt, [
       ...history,
       { role: 'user', content: message },

@@ -33,6 +33,7 @@ export interface Analysis {
   input_summary: string | null;
   result_json: string | null;
   error_message: string | null;
+  progress_step: string | null;
   created_at: string;
 }
 
