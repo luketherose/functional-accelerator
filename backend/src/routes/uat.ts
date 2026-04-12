@@ -451,8 +451,12 @@ router.post('/:projectId/defects/:defectId/override', (req: Request, res: Respon
     if (!overriddenPriority || !['Critical', 'High', 'Medium', 'Low'].includes(overriddenPriority)) {
       return res.status(400).json({ error: 'overriddenPriority must be Critical, High, Medium, or Low' });
     }
+    const MAX_REASON_LENGTH = 5000;
     if (!reason?.trim()) {
       return res.status(400).json({ error: 'reason is required' });
+    }
+    if (reason.length > MAX_REASON_LENGTH) {
+      return res.status(400).json({ error: `reason must be at most ${MAX_REASON_LENGTH} characters` });
     }
 
     const defect = db.prepare(
@@ -949,7 +953,11 @@ router.post('/:projectId/run', tmpUpload.array('files', 20), async (req: Request
 
     // Use first ingestion run id for the async runner (cosmetic, run label only)
     runUATAsync(analysisId, projectId, project.name, mergedDefectsWithRun.map(x => x.defect), fileNameSummary, ingestionRunIds[0], prevAnalysis?.result_json ?? null)
-      .catch(err => console.error('[uat] Async error:', err));
+      .catch(err => {
+        console.error('[uat] Async error:', err);
+        const errMsg = err instanceof Error ? err.message : 'Unknown error';
+        db.prepare(`UPDATE uat_analyses SET status = 'error', error_message = ? WHERE id = ?`).run(errMsg, analysisId);
+      });
 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Failed to start UAT analysis';

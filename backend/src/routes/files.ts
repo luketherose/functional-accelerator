@@ -71,9 +71,11 @@ router.post('/:projectId/upload', upload.single('file'), async (req: Request, re
 
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    const bucket: FileBucket = (['as-is', 'to-be', 'business-rules'].includes(req.body.bucket)
-      ? req.body.bucket
-      : 'as-is') as FileBucket;
+    const validBuckets: FileBucket[] = ['as-is', 'to-be', 'business-rules'];
+    if (!req.body.bucket || !validBuckets.includes(req.body.bucket)) {
+      return res.status(400).json({ error: 'bucket must be one of: as-is, to-be, business-rules' });
+    }
+    const bucket = req.body.bucket as FileBucket;
 
     // Async text extraction
     let extractedText: string | null = null;
@@ -202,7 +204,8 @@ router.get('/:projectId/:fileId/preview', (req: Request, res: Response) => {
     if (!file) return res.status(404).json({ error: 'File not found' });
 
     res.setHeader('Content-Type', file.mime_type);
-    res.setHeader('Content-Disposition', `inline; filename="${file.original_name}"`);
+    const safeFilename = file.original_name.replace(/[\r\n"]/g, '');
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(safeFilename)}`);
     res.sendFile(path.resolve(file.path));
   } catch {
     res.status(500).json({ error: 'Failed to serve file' });
