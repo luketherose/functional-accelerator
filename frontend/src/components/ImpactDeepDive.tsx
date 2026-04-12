@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Loader2, Send, MessageSquare, AlertCircle, Copy, Check, Search, BookOpen, ChevronRight } from 'lucide-react';
+import { Loader2, Send, MessageSquare, AlertCircle, Copy, Check, Search, BookOpen, ChevronRight, FileDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import axios from 'axios';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import type { Impact, ChatMessage } from '../types';
 import { analysisApi } from '../services/api';
+import { openDeepDiveReport } from '../services/deepDiveReport';
 
 interface ImpactDeepDiveProps {
   impact: Impact;
@@ -125,12 +126,24 @@ export default function ImpactDeepDive({ impact, projectId, analysisId }: Impact
           </button>
         )}
         {mode !== 'idle' && (
-          <button
-            onClick={() => { setMode('idle'); setStartMode(null); setMessages([]); setError(''); setInput(''); }}
-            className="text-xs text-text-muted hover:text-text-secondary transition-colors"
-          >
-            {t('common.close')}
-          </button>
+          <div className="flex items-center gap-2">
+            {messages.some(m => m.role === 'assistant') && (
+              <button
+                onClick={() => openDeepDiveReport(impact, messages)}
+                className="btn-secondary text-xs py-1 px-3 flex items-center gap-1.5"
+                title="Esporta come documento PDF"
+              >
+                <FileDown size={12} />
+                Esporta report
+              </button>
+            )}
+            <button
+              onClick={() => { setMode('idle'); setStartMode(null); setMessages([]); setError(''); setInput(''); }}
+              className="text-xs text-text-muted hover:text-text-secondary transition-colors"
+            >
+              {t('common.close')}
+            </button>
+          </div>
         )}
       </div>
 

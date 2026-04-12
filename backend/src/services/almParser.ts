@@ -6,9 +6,12 @@
  * and project setups.
  *
  * Normalizes the raw rows into a structured Defect array ready for Claude analysis.
+ *
+ * H3 Security Fix: Replaced vulnerable `xlsx` (SheetJS) package with `exceljs`
+ * to address known CVEs in xlsx.
  */
 
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -59,7 +62,9 @@ const COL_ALIASES: Record<keyof Omit<Defect, 'rawRow'>, string[]> = {
 // ─── Priority normalization ───────────────────────────────────────────────────
 
 function normalizePriority(raw: string): Defect['priority'] {
-  const v = raw?.toLowerCase().trim() ?? '';
+  // Guard against excessively long input before applying regex (ReDoS protection)
+  const trimmed = (raw ?? '').slice(0, 100);
+  const v = trimmed.toLowerCase().trim();
   if (!v) return 'Unknown';
   // Numeric prefixes common in ALM severity: "1-Critical", "2-High", etc.
   if (/^1[^0-9]|critica|critical|blocker|highest|urgente|urgent/.test(v)) return 'Critical';
@@ -90,20 +95,65 @@ function getCell(row: Record<string, unknown>, col: string | null): string {
   return String(row[col]).trim();
 }
 
+// ─── ExcelJS row-to-object helper ─────────────────────────────────────────────
+
+function worksheetToObjects(worksheet: ExcelJS.Worksheet): Record<string, unknown>[] {
+  const rows: Record<string, unknown>[] = [];
+  const headerRow = worksheet.getRow(1);
+  const headers: string[] = [];
+
+  headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+    headers[colNumber] = cell.text?.trim() || `Column${colNumber}`;
+  });
+
+  worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+    if (rowNumber === 1) return; // skip header row
+    const obj: Record<string, unknown> = {};
+    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      const header = headers[colNumber];
+      if (header) {
+        // Handle dates and rich text
+        if (cell.type === ExcelJS.ValueType.Date) {
+          obj[header] = (cell.value as Date).toISOString().split('T')[0];
+        } else if (cell.type === ExcelJS.ValueType.RichText) {
+          obj[header] = (cell.value as ExcelJS.CellRichTextValue).richText
+            ?.map(rt => rt.text)
+            .join('') ?? '';
+        } else {
+          obj[header] = cell.text ?? '';
+        }
+      }
+    });
+    // Only add non-empty rows
+    if (Object.values(obj).some(v => v !== '' && v !== null && v !== undefined)) {
+      rows.push(obj);
+    }
+  });
+
+  return rows;
+}
+
 // ─── Main parser ──────────────────────────────────────────────────────────────
 
 export function parseALMExcel(buffer: Buffer): ParseResult {
-  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+  // ExcelJS read from buffer is async, but we need sync for the existing API
+  // So we use a sync wrapper via the streaming reader workaround
+  // Note: We actually convert this to async and handle at call sites
+  throw new Error('Use parseALMExcelAsync instead');
+}
+
+export async function parseALMExcelAsync(buffer: Buffer): Promise<ParseResult> {
+  const workbook = new ExcelJS.Workbook();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await workbook.xlsx.load(buffer as any);
 
   // Use the first sheet (ALM exports are usually single-sheet)
-  const sheetName = workbook.SheetNames[0];
-  const sheet = workbook.Sheets[sheetName];
+  const worksheet = workbook.worksheets[0];
+  if (!worksheet) {
+    return { defects: [], totalRows: 0, skippedRows: 0, detectedColumns: [] };
+  }
 
-  // Convert to array of objects with raw headers
-  const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
-    defval: '',
-    raw: false, // format dates as strings
-  });
+  const rawRows = worksheetToObjects(worksheet);
 
   if (rawRows.length === 0) {
     return { defects: [], totalRows: 0, skippedRows: 0, detectedColumns: [] };

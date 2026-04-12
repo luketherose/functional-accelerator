@@ -3,12 +3,13 @@ import { v4 as uuidv4 } from 'uuid';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import db from '../db';
-import { parseALMExcel } from '../services/almParser';
+import { parseALMExcelAsync } from '../services/almParser';
 import { runUATPipeline } from '../services/uatPipeline';
 import { DEFAULT_TAXONOMY, classifyDefects } from '../services/taxonomy';
 import { suggestClusters } from '../services/clusterSuggestions';
+import { sanitizeMessage, sanitizeHistory } from '../utils/sanitize';
 import type { UATAnalysis } from '../types';
 
 const router = Router();
@@ -17,16 +18,16 @@ const tmpUpload = multer({
   dest: path.resolve('./tmp-uploads'),
   limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const allowed = [
+    const allowedMimeTypes = [
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'application/vnd.ms-excel',
       'text/csv',
-      'application/csv',
     ];
-    if (allowed.includes(file.mimetype) || file.originalname.match(/\.(xlsx|xls|csv)$/i)) {
-      cb(null, true);
-    } else {
+    const allowedExtensions = /\.(xlsx|xls|csv)$/i;
+    if (!allowedMimeTypes.includes(file.mimetype) || !allowedExtensions.test(file.originalname)) {
       cb(new Error('Only Excel (.xlsx, .xls) and CSV files are accepted'));
+    } else {
+      cb(null, true);
     }
   },
 });
@@ -220,7 +221,7 @@ router.get('/:projectId/taxonomy', (req: Request, res: Response) => {
     if (rows.length > 0) {
       res.json(rows.map(r => {
         let keywords: string[] = [];
-        try { keywords = JSON.parse(r.keywords); } catch { /* keep empty array */ }
+        try { keywords = JSON.parse(r.keywords); } catch { /* malformed DB row — treat as empty */ }
         return { ...r, keywords };
       }));
     } else {
@@ -611,12 +612,19 @@ router.get('/:projectId/compare', (req: Request, res: Response) => {
 router.post('/:projectId/:analysisId/ai-chat', async (req: Request, res: Response) => {
   try {
     const { projectId, analysisId } = req.params as { projectId: string; analysisId: string };
-    const { message, history = [] } = req.body as {
+    const { message: rawMessage, history: rawHistory = [] } = req.body as {
       message: string;
-      history: Array<{ role: 'user' | 'assistant'; content: string }>;
+      history: unknown;
     };
 
-    if (!message?.trim()) return res.status(400).json({ error: 'message is required' });
+    // H1/H2 fix: sanitize message and history to prevent prompt injection
+    const msgResult = sanitizeMessage(rawMessage);
+    if (!msgResult.valid) return res.status(400).json({ error: msgResult.error });
+    const message = msgResult.value;
+
+    const histResult = sanitizeHistory(rawHistory);
+    if (!histResult.valid) return res.status(400).json({ error: histResult.error });
+    const history = histResult.value;
 
     const analysis = db.prepare(
       'SELECT id, version_name, created_at, defect_count, result_json FROM uat_analyses WHERE id = ? AND project_id = ? AND status = ?'
@@ -751,7 +759,7 @@ router.get('/:projectId/:analysisId', (req: Request, res: Response) => {
 });
 
 // ─── GET /api/uat/:projectId/:analysisId/export/defects.xlsx ─────────────────
-router.get('/:projectId/:analysisId/export/defects.xlsx', (req: Request, res: Response) => {
+router.get('/:projectId/:analysisId/export/defects.xlsx', async (req: Request, res: Response) => {
   try {
     const { projectId, analysisId } = req.params as { projectId: string; analysisId: string };
 
@@ -813,32 +821,38 @@ router.get('/:projectId/:analysisId/export/defects.xlsx', (req: Request, res: Re
       ORDER BY "Critical" DESC, "High" DESC
     `).all(analysisId) as Record<string, string | number>[];
 
-    // ── Build workbook ────────────────────────────────────────────────────────
-    const wb = XLSX.utils.book_new();
+    // ── Build workbook (using exceljs — H3 fix: replaces vulnerable xlsx) ────
+    const wb = new ExcelJS.Workbook();
 
-    const wsDefects = XLSX.utils.json_to_sheet(
-      defectRows.map(r => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v ?? ''])))
-    );
-    // Auto-width columns
-    const defectColWidths = Object.keys(defectRows[0] ?? {}).map(k => ({
-      wch: Math.max(k.length, 14),
-    }));
-    wsDefects['!cols'] = defectColWidths;
-    XLSX.utils.book_append_sheet(wb, wsDefects, 'Defects');
+    // Sheet 1: Defects
+    const wsDefects = wb.addWorksheet('Defects');
+    if (defectRows.length > 0) {
+      const defectHeaders = Object.keys(defectRows[0]);
+      wsDefects.columns = defectHeaders.map(h => ({ header: h, key: h, width: Math.max(h.length + 2, 14) }));
+      for (const row of defectRows) {
+        wsDefects.addRow(Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v ?? ''])));
+      }
+    }
 
-    const wsClusters = XLSX.utils.json_to_sheet(clusterRows);
-    wsClusters['!cols'] = Object.keys(clusterRows[0] ?? {}).map(k => ({ wch: Math.max(k.length, 12) }));
-    XLSX.utils.book_append_sheet(wb, wsClusters, 'Cluster Summary');
+    // Sheet 2: Cluster Summary
+    const wsClusters = wb.addWorksheet('Cluster Summary');
+    if (clusterRows.length > 0) {
+      const clusterHeaders = Object.keys(clusterRows[0]);
+      wsClusters.columns = clusterHeaders.map(h => ({ header: h, key: h, width: Math.max(h.length + 2, 12) }));
+      for (const row of clusterRows) {
+        wsClusters.addRow(row);
+      }
+    }
 
-    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const buffer = await wb.xlsx.writeBuffer();
 
     const safeName = (project?.name ?? 'project').replace(/[^a-z0-9]/gi, '-').toLowerCase();
-    const safeVersion = analysis.version_name.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+    const safeVersion = (analysis.version_name ?? 'v1').replace(/[\r\n"]/g, '').replace(/\s+/g, '-').toLowerCase();
     const fileName = `${safeName}-${safeVersion}-defects.xlsx`;
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-    res.send(buffer);
+    res.send(Buffer.from(buffer));
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Export failed';
     console.error('[uat] Excel export error:', msg);
@@ -865,7 +879,7 @@ router.post('/:projectId/run', tmpUpload.array('files', 20), async (req: Request
     for (const file of uploadedFiles) {
       try {
         const buf = fs.readFileSync(file.path);
-        const parsed = parseALMExcel(buf);
+        const parsed = await parseALMExcelAsync(buf);
         parseResults.push({ file, defects: parsed.defects, detectedColumns: parsed.detectedColumns });
       } catch (e) {
         parseErrors.push(`${file.originalname}: ${e instanceof Error ? e.message : 'parse error'}`);

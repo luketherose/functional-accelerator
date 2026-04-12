@@ -19,14 +19,18 @@ const PORT = parseInt(process.env.PORT || '3001', 10);
 // --- Middleware ---
 const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:5173').split(',');
 app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
-app.use((_, res, next) => {
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '500kb' }));
+
+// --- Security headers ---
+app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'");
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
   next();
 });
-app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true }));
 
 // Health check
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
@@ -41,8 +45,9 @@ app.use('/api/functional', functionalRouter);
 
 // --- Error handler ---
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error('[server] Unhandled error:', err.message);
-  res.status(500).json({ error: err.message || 'Internal server error' });
+  const isDev = process.env.NODE_ENV !== 'production';
+  console.error('[server] Unhandled error:', err.message, isDev ? err.stack : '');
+  res.status(500).json({ error: isDev ? err.message : 'Internal server error' });
 });
 
 // --- 404 handler ---

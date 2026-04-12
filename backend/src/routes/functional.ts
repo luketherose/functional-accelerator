@@ -100,10 +100,14 @@ router.get('/:projectId/runs', (req, res) => {
       ORDER BY far.created_at DESC
     `).all(projectId) as Array<FunctionalAnalysisRun & { as_is_version_ids: string; to_be_version_ids: string; confirmed_gap_count: number; coverage_score: number | null }>;
 
+    const parseIds = (s: string): string[] => {
+      try { const p = JSON.parse(s); return Array.isArray(p) ? p.filter((x): x is string => typeof x === 'string') : []; }
+      catch { return []; }
+    };
     res.json(runs.map(r => ({
       ...r,
-      as_is_version_ids: JSON.parse(r.as_is_version_ids),
-      to_be_version_ids: JSON.parse(r.to_be_version_ids),
+      as_is_version_ids: parseIds(r.as_is_version_ids),
+      to_be_version_ids: parseIds(r.to_be_version_ids),
     })));
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -153,8 +157,15 @@ router.get('/:projectId/runs/:runId', (req, res) => {
     const gaps = db.prepare("SELECT * FROM functional_gaps WHERE run_id = ? AND status = 'confirmed' ORDER BY gap_type, created_at").all(runId) as Array<FunctionalGap & { field_diffs: string }>;
     const coverage = db.prepare('SELECT * FROM coverage_reports WHERE run_id = ?').get(runId);
 
-    const asIsVersionIds: string[] = (() => { try { return JSON.parse(run.as_is_version_ids); } catch { return []; } })();
-    const toBeVersionIds: string[] = (() => { try { return JSON.parse(run.to_be_version_ids); } catch { return []; } })();
+    const parseVersionIds = (jsonStr: string): string[] => {
+      try {
+        const parsed = JSON.parse(jsonStr);
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter((id): id is string => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id));
+      } catch { return []; }
+    };
+    const asIsVersionIds = parseVersionIds(run.as_is_version_ids);
+    const toBeVersionIds = parseVersionIds(run.to_be_version_ids);
 
     const countComponents = (ids: string[]) => {
       if (ids.length === 0) return 0;
@@ -183,12 +194,17 @@ router.get('/:projectId/runs/:runId/gaps', (req, res) => {
   try {
     let query = "SELECT fg.*, ap.as_is_component_id, ap.to_be_component_id FROM functional_gaps fg JOIN alignment_pairs ap ON fg.alignment_pair_id = ap.id WHERE fg.run_id = ? AND fg.status = 'confirmed'";
     const params: unknown[] = [runId];
-    if (gap_type) { query += ' AND fg.gap_type = ?'; params.push(gap_type); }
+    const ALLOWED_GAP_TYPES = ['added', 'modified', 'removed', 'unchanged', 'new', 'missing', 'changed'];
+    if (gap_type && typeof gap_type === 'string' && ALLOWED_GAP_TYPES.includes(gap_type)) {
+      query += ' AND fg.gap_type = ?';
+      params.push(gap_type);
+    }
     if (min_confidence) {
-      const minConf = parseFloat(min_confidence as string);
-      if (isNaN(minConf)) return res.status(400).json({ error: 'min_confidence must be a number' });
-      query += ' AND fg.confidence >= ?';
-      params.push(minConf);
+      const confidence = parseFloat(min_confidence as string);
+      if (!isNaN(confidence) && confidence >= 0 && confidence <= 1) {
+        query += ' AND fg.confidence >= ?';
+        params.push(confidence);
+      }
     }
     query += ' ORDER BY fg.gap_type, fg.created_at';
 
