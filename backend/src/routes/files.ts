@@ -201,8 +201,9 @@ router.get('/:projectId/:fileId/preview', (req: Request, res: Response) => {
     const file = db.prepare('SELECT * FROM files WHERE id = ? AND project_id = ?').get(req.params.fileId, req.params.projectId) as { path: string; mime_type: string; original_name: string } | undefined;
     if (!file) return res.status(404).json({ error: 'File not found' });
 
+    const safeFileName = file.original_name.replace(/[^\w.\-]/g, '_');
     res.setHeader('Content-Type', file.mime_type);
-    res.setHeader('Content-Disposition', `inline; filename="${file.original_name}"`);
+    res.setHeader('Content-Disposition', `inline; filename="${safeFileName}"`);
     res.sendFile(path.resolve(file.path));
   } catch {
     res.status(500).json({ error: 'Failed to serve file' });

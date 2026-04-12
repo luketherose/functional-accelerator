@@ -57,23 +57,25 @@ router.get('/:projectId/:analysisId/clusters', (req: Request, res: Response) => 
     ).get(analysisId, projectId);
     if (!analysis) return res.status(404).json({ error: 'UAT analysis not found' });
 
-    // Aggregate cluster_assignments to return cluster summaries with counts
+    // Aggregate cluster_assignments to return cluster summaries with counts.
+    // COALESCE(ro.overridden_priority, d.priority) ensures risk overrides are reflected.
     const rows = db.prepare(`
       SELECT
         ca.cluster_key,
         ca.cluster_name,
         COUNT(*) as defect_count,
-        SUM(CASE WHEN d.priority = 'Critical' THEN 1 ELSE 0 END) as critical_count,
-        SUM(CASE WHEN d.priority = 'High' THEN 1 ELSE 0 END) as high_count,
-        SUM(CASE WHEN d.priority = 'Medium' THEN 1 ELSE 0 END) as medium_count,
-        SUM(CASE WHEN d.priority = 'Low' THEN 1 ELSE 0 END) as low_count
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Critical' THEN 1 ELSE 0 END) as critical_count,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'High' THEN 1 ELSE 0 END) as high_count,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Medium' THEN 1 ELSE 0 END) as medium_count,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Low' THEN 1 ELSE 0 END) as low_count
       FROM cluster_assignments ca
       JOIN defects d ON d.id = ca.defect_id
+      LEFT JOIN risk_overrides ro ON ro.defect_id = d.id
       WHERE ca.uat_analysis_id = ?
       GROUP BY ca.cluster_key, ca.cluster_name
-      ORDER BY (SUM(CASE WHEN d.priority = 'Critical' THEN 4 ELSE 0 END) +
-                SUM(CASE WHEN d.priority = 'High' THEN 2 ELSE 0 END) +
-                SUM(CASE WHEN d.priority = 'Medium' THEN 1 ELSE 0 END)) DESC
+      ORDER BY (SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Critical' THEN 4 ELSE 0 END) +
+                SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'High' THEN 2 ELSE 0 END) +
+                SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Medium' THEN 1 ELSE 0 END)) DESC
     `).all(analysisId);
 
     res.json(rows);
@@ -822,7 +824,8 @@ router.get('/:projectId/:analysisId/export/defects.xlsx', (req: Request, res: Re
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
     const safeName = (project?.name ?? 'project').replace(/[^a-z0-9]/gi, '-').toLowerCase();
-    const fileName = `${safeName}-${analysis.version_name.replace(/\s+/g, '-').toLowerCase()}-defects.xlsx`;
+    const safeVersion = analysis.version_name.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+    const fileName = `${safeName}-${safeVersion}-defects.xlsx`;
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);

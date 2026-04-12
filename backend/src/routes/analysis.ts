@@ -171,7 +171,7 @@ router.post('/:projectId/:analysisId/impact-prototype', tmpUpload.single('file')
     console.error('[analysis] Impact prototype error:', msg);
     res.status(500).json({ error: msg });
   } finally {
-    if (tmpFilePath && fs.existsSync(tmpFilePath)) {
+    if (tmpFilePath) {
       try { fs.unlinkSync(tmpFilePath); } catch (_) {}
     }
   }
