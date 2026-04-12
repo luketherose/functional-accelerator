@@ -459,8 +459,8 @@ export default function UATDashboard({ result, analysis, projectName, fileName }
               {filteredRiskAreas.length === 0 && (
                 <p className="text-xs text-text-muted py-2 text-center">{t('dashboard.noResults')}</p>
               )}
-              {filteredRiskAreas.map((area, i) => (
-                <div key={i} className="rounded-xl border border-surface-border p-3.5 space-y-2">
+              {filteredRiskAreas.map((area) => (
+                <div key={area.area} className="rounded-xl border border-surface-border p-3.5 space-y-2">
                   <div className="flex items-start justify-between gap-2">
                     <p className="text-xs font-semibold text-text-primary flex-1">{area.area}</p>
                     <RiskBadge level={area.riskLevel} />
@@ -511,8 +511,8 @@ export default function UATDashboard({ result, analysis, projectName, fileName }
               {filteredPrevActions.length === 0 && (
                 <p className="text-xs text-text-muted py-2 text-center">{t('dashboard.noResults')}</p>
               )}
-              {filteredPrevActions.map((action, i) => (
-                <div key={i} className="flex items-start gap-3 p-3 rounded-xl border border-surface-border">
+              {filteredPrevActions.map((action) => (
+                <div key={action.action} className="flex items-start gap-3 p-3 rounded-xl border border-surface-border">
                   <div className={`w-7 h-7 rounded-lg shrink-0 flex items-center justify-center ${
                     action.priority === 'high' ? 'bg-red-500' : action.priority === 'medium' ? 'bg-amber-400' : 'bg-green-400'
                   }`}>
@@ -562,8 +562,8 @@ export default function UATDashboard({ result, analysis, projectName, fileName }
             {filteredPatterns.length === 0 && (
               <p className="text-xs text-text-muted py-2 text-center">{t('dashboard.noResults')}</p>
             )}
-            {filteredPatterns.map((p, i) => (
-              <div key={i} className="flex items-center gap-3 p-3 rounded-xl border border-surface-border">
+            {filteredPatterns.map((p) => (
+              <div key={p.pattern} className="flex items-center gap-3 p-3 rounded-xl border border-surface-border">
                 <div className={`text-sm font-bold w-8 text-center shrink-0 ${
                   p.priority === 'high' ? 'text-red-600' : p.priority === 'medium' ? 'text-amber-600' : 'text-green-600'
                 }`}>

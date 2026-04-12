@@ -184,7 +184,12 @@ router.get('/:projectId/runs/:runId/gaps', (req, res) => {
     let query = "SELECT fg.*, ap.as_is_component_id, ap.to_be_component_id FROM functional_gaps fg JOIN alignment_pairs ap ON fg.alignment_pair_id = ap.id WHERE fg.run_id = ? AND fg.status = 'confirmed'";
     const params: unknown[] = [runId];
     if (gap_type) { query += ' AND fg.gap_type = ?'; params.push(gap_type); }
-    if (min_confidence) { query += ' AND fg.confidence >= ?'; params.push(parseFloat(min_confidence as string)); }
+    if (min_confidence) {
+      const minConf = parseFloat(min_confidence as string);
+      if (isNaN(minConf)) return res.status(400).json({ error: 'min_confidence must be a number' });
+      query += ' AND fg.confidence >= ?';
+      params.push(minConf);
+    }
     query += ' ORDER BY fg.gap_type, fg.created_at';
 
     const gaps = db.prepare(query).all(...params) as Array<FunctionalGap & { field_diffs: string }>;

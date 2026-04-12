@@ -97,6 +97,7 @@ export default function ProjectDetailPage() {
   const handleReindex = async () => {
     if (!id) return;
     setReindexing(true);
+    let poll: ReturnType<typeof setInterval> | null = null;
     try {
       await filesApi.reindex(id);
       if (reindexPollRef.current) clearInterval(reindexPollRef.current);
@@ -112,6 +113,7 @@ export default function ProjectDetailPage() {
         }
       }, 3000);
     } catch {
+      if (poll) clearInterval(poll);
       setReindexing(false);
     }
   };

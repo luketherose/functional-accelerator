@@ -361,8 +361,13 @@ async function reclusterAsync(
 router.get('/:projectId/defects/all', (req: Request, res: Response) => {
   try {
     const { projectId } = req.params as { projectId: string };
-    const limit = Math.min(Math.max(parseInt((req.query.limit as string) || '500', 10) || 500, 1), 1000);
-    const offset = Math.max(parseInt((req.query.offset as string) || '0', 10) || 0, 0);
+    const rawLimit = parseInt((req.query.limit as string) || '500', 10);
+    const rawOffset = parseInt((req.query.offset as string) || '0', 10);
+    if (isNaN(rawLimit) || isNaN(rawOffset)) {
+      return res.status(400).json({ error: 'limit and offset must be integers' });
+    }
+    const limit = Math.min(Math.max(rawLimit, 1), 1000);
+    const offset = Math.max(rawOffset, 0);
 
     const rows = db.prepare(`
       SELECT d.*, ir.file_name, ir.created_at as run_date

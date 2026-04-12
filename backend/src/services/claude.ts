@@ -45,7 +45,7 @@ export async function callClaude(prompt: string): Promise<AnalysisResult> {
   } catch (err: unknown) {
     clearTimeout(timeout);
     if (err instanceof Error && (err.name === 'AbortError' || err.name === 'APIUserAbortError')) {
-      throw new Error('Claude API request timed out after 2 minutes');
+      throw new Error('Claude API request timed out after 10 minutes');
     }
     throw err;
   }
