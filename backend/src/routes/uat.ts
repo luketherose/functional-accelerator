@@ -17,16 +17,16 @@ const tmpUpload = multer({
   dest: path.resolve('./tmp-uploads'),
   limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const allowed = [
+    const allowedMimeTypes = [
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'application/vnd.ms-excel',
       'text/csv',
-      'application/csv',
     ];
-    if (allowed.includes(file.mimetype) || file.originalname.match(/\.(xlsx|xls|csv)$/i)) {
-      cb(null, true);
-    } else {
+    const allowedExtensions = /\.(xlsx|xls|csv)$/i;
+    if (!allowedMimeTypes.includes(file.mimetype) || !allowedExtensions.test(file.originalname)) {
       cb(new Error('Only Excel (.xlsx, .xls) and CSV files are accepted'));
+    } else {
+      cb(null, true);
     }
   },
 });
@@ -814,7 +814,8 @@ router.get('/:projectId/:analysisId/export/defects.xlsx', (req: Request, res: Re
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
     const safeName = (project?.name ?? 'project').replace(/[^a-z0-9]/gi, '-').toLowerCase();
-    const fileName = `${safeName}-${analysis.version_name.replace(/\s+/g, '-').toLowerCase()}-defects.xlsx`;
+    const safeVersion = (analysis.version_name ?? 'v1').replace(/[\r\n"]/g, '').replace(/\s+/g, '-').toLowerCase();
+    const fileName = `${safeName}-${safeVersion}-defects.xlsx`;
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);

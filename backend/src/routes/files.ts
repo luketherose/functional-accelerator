@@ -15,12 +15,25 @@ if (!fs.existsSync(UPLOADS_BASE)) fs.mkdirSync(UPLOADS_BASE, { recursive: true }
 
 const MAX_SIZE_MB = parseInt(process.env.MAX_FILE_SIZE_MB || '20', 10);
 
+// Only allow UUID-shaped projectIds to prevent path traversal
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function safeProjectDir(projectId: string): string {
+  if (!UUID_RE.test(projectId)) throw new Error('Invalid projectId');
+  const resolved = path.resolve(path.join(UPLOADS_BASE, projectId));
+  if (!resolved.startsWith(UPLOADS_BASE + path.sep)) throw new Error('Path traversal detected');
+  return resolved;
+}
+
 const storage = multer.diskStorage({
   destination: (req, _file, cb) => {
-    const projectId = req.params.projectId as string;
-    const dir = path.join(UPLOADS_BASE, projectId);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
+    try {
+      const dir = safeProjectDir(req.params.projectId as string);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    } catch (e) {
+      cb(e as Error, '');
+    }
   },
   filename: (_req, file, cb) => {
     const ext = path.extname(file.originalname);
@@ -71,9 +84,11 @@ router.post('/:projectId/upload', upload.single('file'), async (req: Request, re
 
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    const bucket: FileBucket = (['as-is', 'to-be', 'business-rules'].includes(req.body.bucket)
-      ? req.body.bucket
-      : 'as-is') as FileBucket;
+    const allowedBuckets = ['as-is', 'to-be', 'business-rules'];
+    if (!allowedBuckets.includes(req.body.bucket)) {
+      return res.status(400).json({ error: `Invalid bucket. Must be one of: ${allowedBuckets.join(', ')}` });
+    }
+    const bucket: FileBucket = req.body.bucket as FileBucket;
 
     // Async text extraction
     let extractedText: string | null = null;
@@ -201,9 +216,17 @@ router.get('/:projectId/:fileId/preview', (req: Request, res: Response) => {
     const file = db.prepare('SELECT * FROM files WHERE id = ? AND project_id = ?').get(req.params.fileId, req.params.projectId) as { path: string; mime_type: string; original_name: string } | undefined;
     if (!file) return res.status(404).json({ error: 'File not found' });
 
+    // Path traversal protection: ensure resolved path stays within UPLOADS_BASE
+    const resolvedPath = path.resolve(file.path);
+    if (!resolvedPath.startsWith(UPLOADS_BASE + path.sep) && resolvedPath !== UPLOADS_BASE) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Sanitize filename to prevent header injection
+    const safeName = file.original_name.replace(/["\r\n]/g, '').slice(0, 255);
     res.setHeader('Content-Type', file.mime_type);
-    res.setHeader('Content-Disposition', `inline; filename="${file.original_name}"`);
-    res.sendFile(path.resolve(file.path));
+    res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+    res.sendFile(resolvedPath);
   } catch {
     res.status(500).json({ error: 'Failed to serve file' });
   }
