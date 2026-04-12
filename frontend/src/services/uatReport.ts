@@ -23,6 +23,11 @@ function rgb(...c: [number, number, number]): { r: number; g: number; b: number 
   return { r: c[0], g: c[1], b: c[2] };
 }
 
+function lastTableY(doc: jsPDF, fallback = 20): number {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return ((doc as any).lastAutoTable?.finalY ?? fallback) + 8;
+}
+
 const PRIORITY_COLOR: Record<string, [number, number, number]> = {
   Critical: C.red,
   High:     C.orange,
@@ -226,8 +231,7 @@ function buildPrioritySection(doc: jsPDF, result: UATAnalysisResult, y: number):
     },
   });
 
-  // @ts-expect-error jspdf-autotable adds lastAutoTable dynamically
-  return doc.lastAutoTable.finalY + 8;
+  return lastTableY(doc);
 }
 
 // ─── Cluster breakdown ────────────────────────────────────────────────────────
@@ -268,8 +272,7 @@ function buildClusterSection(doc: jsPDF, result: UATAnalysisResult, y: number): 
     },
   });
 
-  // @ts-expect-error
-  return doc.lastAutoTable.finalY + 8;
+  return lastTableY(doc);
 }
 
 // ─── Risk areas ───────────────────────────────────────────────────────────────
@@ -308,8 +311,7 @@ function buildRiskAreasSection(doc: jsPDF, result: UATAnalysisResult, y: number)
     },
   });
 
-  // @ts-expect-error
-  return doc.lastAutoTable.finalY + 8;
+  return lastTableY(doc);
 }
 
 // ─── Prevention actions ───────────────────────────────────────────────────────
@@ -350,8 +352,7 @@ function buildPreventionSection(doc: jsPDF, result: UATAnalysisResult, y: number
     },
   });
 
-  // @ts-expect-error
-  return doc.lastAutoTable.finalY + 8;
+  return lastTableY(doc);
 }
 
 // ─── Top defects ──────────────────────────────────────────────────────────────
@@ -390,8 +391,7 @@ function buildTopDefectsSection(doc: jsPDF, result: UATAnalysisResult, y: number
     },
   });
 
-  // @ts-expect-error
-  return doc.lastAutoTable.finalY + 8;
+  return lastTableY(doc);
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────

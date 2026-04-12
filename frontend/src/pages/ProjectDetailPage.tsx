@@ -97,16 +97,21 @@ export default function ProjectDetailPage() {
   const handleReindex = async () => {
     if (!id) return;
     setReindexing(true);
+    let poll: ReturnType<typeof setInterval> | null = null;
     try {
       await filesApi.reindex(id);
-      const poll = setInterval(async () => {
+      poll = setInterval(async () => {
         const status = await filesApi.indexStatus(id).catch(() => null);
         if (status) {
           setIndexStatus(status);
-          if (status.pending === 0) { clearInterval(poll); setReindexing(false); }
+          if (status.pending === 0) {
+            if (poll) clearInterval(poll);
+            setReindexing(false);
+          }
         }
       }, 3000);
     } catch {
+      if (poll) clearInterval(poll);
       setReindexing(false);
     }
   };
@@ -181,7 +186,7 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     const activeRun = functionalRuns.find(r => r.status !== 'done' && r.status !== 'error');
     if (!activeRun || !project) return;
-    const id = setInterval(async () => {
+    const pollInterval = setInterval(async () => {
       try {
         const runs = await functionalApi.listRuns(project.id);
         setFunctionalRuns(runs);
@@ -189,7 +194,7 @@ export default function ProjectDetailPage() {
         if (wasActive?.status === 'done') setSelectedFunctionalRun(wasActive);
       } catch { /* keep polling */ }
     }, 3000);
-    return () => clearInterval(id);
+    return () => clearInterval(pollInterval);
   }, [functionalRuns, project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
