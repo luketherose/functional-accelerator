@@ -83,7 +83,7 @@ router.delete('/:id', (req: Request, res: Response) => {
     const files = db.prepare('SELECT path FROM files WHERE project_id = ?').all(req.params.id) as { path: string }[];
     const fs = require('fs');
     for (const file of files) {
-      try { fs.unlinkSync(file.path); } catch (_) {}
+      try { fs.unlinkSync(file.path); } catch (err) { console.warn('[projects] Could not delete file from disk:', file.path, err); }
     }
 
     db.prepare('DELETE FROM projects WHERE id = ?').run(req.params.id);

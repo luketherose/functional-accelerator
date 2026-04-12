@@ -758,7 +758,7 @@ router.get('/:projectId/:analysisId/export/defects.xlsx', (req: Request, res: Re
         d.application        AS "Application",
         d.module             AS "Module",
         d.status             AS "Status",
-        d.severity           AS "Severity",
+        d.priority           AS "Severity",
         d.environment        AS "Environment",
         d.detected_by        AS "Detected By",
         d.assigned_to        AS "Assigned To",
