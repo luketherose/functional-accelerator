@@ -136,6 +136,7 @@ async function runRiskAssessmentAsync(
       // Excel
       const XLSX = require('xlsx') as typeof import('xlsx');
       const workbook = XLSX.readFile(tmpFilePath);
+      if (!workbook.SheetNames.length) throw new Error('Workbook has no sheets');
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
       rows = XLSX.utils.sheet_to_json<DefectRow>(sheet);

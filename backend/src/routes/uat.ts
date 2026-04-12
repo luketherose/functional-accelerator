@@ -57,23 +57,25 @@ router.get('/:projectId/:analysisId/clusters', (req: Request, res: Response) => 
     ).get(analysisId, projectId);
     if (!analysis) return res.status(404).json({ error: 'UAT analysis not found' });
 
-    // Aggregate cluster_assignments to return cluster summaries with counts
+    // Aggregate cluster_assignments to return cluster summaries with counts.
+    // COALESCE(ro.overridden_priority, d.priority) ensures risk overrides are reflected.
     const rows = db.prepare(`
       SELECT
         ca.cluster_key,
         ca.cluster_name,
         COUNT(*) as defect_count,
-        SUM(CASE WHEN d.priority = 'Critical' THEN 1 ELSE 0 END) as critical_count,
-        SUM(CASE WHEN d.priority = 'High' THEN 1 ELSE 0 END) as high_count,
-        SUM(CASE WHEN d.priority = 'Medium' THEN 1 ELSE 0 END) as medium_count,
-        SUM(CASE WHEN d.priority = 'Low' THEN 1 ELSE 0 END) as low_count
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Critical' THEN 1 ELSE 0 END) as critical_count,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'High' THEN 1 ELSE 0 END) as high_count,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Medium' THEN 1 ELSE 0 END) as medium_count,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Low' THEN 1 ELSE 0 END) as low_count
       FROM cluster_assignments ca
       JOIN defects d ON d.id = ca.defect_id
+      LEFT JOIN risk_overrides ro ON ro.defect_id = d.id
       WHERE ca.uat_analysis_id = ?
       GROUP BY ca.cluster_key, ca.cluster_name
-      ORDER BY (SUM(CASE WHEN d.priority = 'Critical' THEN 4 ELSE 0 END) +
-                SUM(CASE WHEN d.priority = 'High' THEN 2 ELSE 0 END) +
-                SUM(CASE WHEN d.priority = 'Medium' THEN 1 ELSE 0 END)) DESC
+      ORDER BY (SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Critical' THEN 4 ELSE 0 END) +
+                SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'High' THEN 2 ELSE 0 END) +
+                SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Medium' THEN 1 ELSE 0 END)) DESC
     `).all(analysisId);
 
     res.json(rows);
@@ -216,7 +218,11 @@ router.get('/:projectId/taxonomy', (req: Request, res: Response) => {
     ).all(projectId) as { id: string; cluster_key: string; cluster_name: string; keywords: string; sort_order: number }[];
 
     if (rows.length > 0) {
-      res.json(rows.map(r => ({ ...r, keywords: JSON.parse(r.keywords) })));
+      res.json(rows.map(r => {
+        let keywords: string[] = [];
+        try { keywords = JSON.parse(r.keywords); } catch { /* keep empty array */ }
+        return { ...r, keywords };
+      }));
     } else {
       // Return defaults (not yet saved to DB)
       res.json(DEFAULT_TAXONOMY.map((c, i) => ({ id: null, cluster_key: c.key, cluster_name: c.name, keywords: c.keywords, sort_order: i })));
@@ -279,7 +285,11 @@ router.post('/:projectId/recluster', async (req: Request, res: Response) => {
     ).all(projectId) as { cluster_key: string; cluster_name: string; keywords: string }[];
 
     const taxonomy = configRows.length > 0
-      ? configRows.map(r => ({ key: r.cluster_key, name: r.cluster_name, keywords: JSON.parse(r.keywords) as string[] }))
+      ? configRows.map(r => {
+          let keywords: string[] = [];
+          try { keywords = JSON.parse(r.keywords) as string[]; } catch { /* keep empty */ }
+          return { key: r.cluster_key, name: r.cluster_name, keywords };
+        })
       : DEFAULT_TAXONOMY.map(c => ({ key: c.key, name: c.name, keywords: c.keywords }));
 
     // Get all ingestion runs for this project
@@ -356,8 +366,8 @@ router.get('/:projectId/defects/all', (req: Request, res: Response) => {
     if (isNaN(rawLimit) || isNaN(rawOffset)) {
       return res.status(400).json({ error: 'limit and offset must be integers' });
     }
-    const limit = Math.min(rawLimit, 1000);
-    const offset = rawOffset;
+    const limit = Math.min(Math.max(rawLimit, 1), 1000);
+    const offset = Math.max(rawOffset, 0);
 
     const rows = db.prepare(`
       SELECT d.*, ir.file_name, ir.created_at as run_date
@@ -456,8 +466,12 @@ router.post('/:projectId/defects/:defectId/override', (req: Request, res: Respon
     if (!overriddenPriority || !['Critical', 'High', 'Medium', 'Low'].includes(overriddenPriority)) {
       return res.status(400).json({ error: 'overriddenPriority must be Critical, High, Medium, or Low' });
     }
+    const MAX_REASON_LENGTH = 5000;
     if (!reason?.trim()) {
       return res.status(400).json({ error: 'reason is required' });
+    }
+    if (reason.length > MAX_REASON_LENGTH) {
+      return res.status(400).json({ error: `reason must be at most ${MAX_REASON_LENGTH} characters` });
     }
 
     const defect = db.prepare(
@@ -763,7 +777,7 @@ router.get('/:projectId/:analysisId/export/defects.xlsx', (req: Request, res: Re
         d.application        AS "Application",
         d.module             AS "Module",
         d.status             AS "Status",
-        d.severity           AS "Severity",
+        d.priority           AS "Severity",
         d.environment        AS "Environment",
         d.detected_by        AS "Detected By",
         d.assigned_to        AS "Assigned To",
@@ -819,7 +833,8 @@ router.get('/:projectId/:analysisId/export/defects.xlsx', (req: Request, res: Re
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
     const safeName = (project?.name ?? 'project').replace(/[^a-z0-9]/gi, '-').toLowerCase();
-    const fileName = `${safeName}-${analysis.version_name.replace(/\s+/g, '-').toLowerCase()}-defects.xlsx`;
+    const safeVersion = analysis.version_name.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+    const fileName = `${safeName}-${safeVersion}-defects.xlsx`;
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
@@ -954,7 +969,11 @@ router.post('/:projectId/run', tmpUpload.array('files', 20), async (req: Request
 
     // Use first ingestion run id for the async runner (cosmetic, run label only)
     runUATAsync(analysisId, projectId, project.name, mergedDefectsWithRun.map(x => x.defect), fileNameSummary, ingestionRunIds[0], prevAnalysis?.result_json ?? null)
-      .catch(err => console.error('[uat] Async error:', err));
+      .catch(err => {
+        console.error('[uat] Async error:', err);
+        const errMsg = err instanceof Error ? err.message : 'Unknown error';
+        db.prepare(`UPDATE uat_analyses SET status = 'error', error_message = ? WHERE id = ?`).run(errMsg, analysisId);
+      });
 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Failed to start UAT analysis';

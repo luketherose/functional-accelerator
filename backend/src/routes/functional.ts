@@ -6,14 +6,16 @@ import type { DocumentVersion, FunctionalAnalysisRun, FunctionalGap } from '../t
 
 const router = Router();
 
-function parseJsonField<T>(value: unknown, fallback: T | null = null): T {
-  if (typeof value !== 'string') return value as T;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    console.warn('[functional] Failed to parse JSON field:', value);
-    return fallback as T;
+function parseJsonField<T>(value: unknown, fallback?: T): T {
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      console.error('[functional] Failed to parse JSON field, using fallback. Value:', value?.slice?.(0, 200));
+      return (fallback ?? value) as T;
+    }
   }
+  return value as T;
 }
 
 // ─── Document Version Management ─────────────────────────────────────────────
@@ -151,8 +153,8 @@ router.get('/:projectId/runs/:runId', (req, res) => {
     const gaps = db.prepare("SELECT * FROM functional_gaps WHERE run_id = ? AND status = 'confirmed' ORDER BY gap_type, created_at").all(runId) as Array<FunctionalGap & { field_diffs: string }>;
     const coverage = db.prepare('SELECT * FROM coverage_reports WHERE run_id = ?').get(runId);
 
-    const asIsVersionIds: string[] = JSON.parse(run.as_is_version_ids);
-    const toBeVersionIds: string[] = JSON.parse(run.to_be_version_ids);
+    const asIsVersionIds: string[] = (() => { try { return JSON.parse(run.as_is_version_ids); } catch { return []; } })();
+    const toBeVersionIds: string[] = (() => { try { return JSON.parse(run.to_be_version_ids); } catch { return []; } })();
 
     const countComponents = (ids: string[]) => {
       if (ids.length === 0) return 0;

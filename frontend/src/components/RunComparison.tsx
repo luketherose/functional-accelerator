@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Minus, Loader2, GitCompare, AlertCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import axios from 'axios';
 import type { UATAnalysis, RunComparisonData, ClusterDelta } from '../types';
 import { uatApi } from '../services/api';
 
@@ -145,14 +146,19 @@ export default function RunComparison({ analyses, projectId }: Props) {
   const canCompare = run1Id && run2Id && run1Id !== run2Id;
 
   useEffect(() => {
-    if (!canCompare) return;
+    if (!run1Id || !run2Id || run1Id === run2Id) return;
     setLoading(true);
     setError('');
     uatApi.compareRuns(projectId, run1Id, run2Id)
       .then(setData)
-      .catch(e => setError(e?.response?.data?.error ?? 'Failed to load comparison'))
+      .catch(e => {
+        const msg = axios.isAxiosError(e)
+          ? (e.response?.data?.error ?? 'Failed to load comparison')
+          : (e instanceof Error ? e.message : 'Failed to load comparison');
+        setError(msg);
+      })
       .finally(() => setLoading(false));
-  }, [projectId, run1Id, run2Id, canCompare]);
+  }, [projectId, run1Id, run2Id]);
 
   if (done.length < 2) {
     return (
