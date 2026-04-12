@@ -6,8 +6,16 @@ import type { DocumentVersion, FunctionalAnalysisRun, FunctionalGap } from '../t
 
 const router = Router();
 
-function parseJsonField<T>(value: unknown): T {
-  return typeof value === 'string' ? JSON.parse(value) as T : value as T;
+function parseJsonField<T>(value: unknown, fallback?: T): T {
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      console.error('[functional] Failed to parse JSON field, using fallback. Value:', value?.slice?.(0, 200));
+      return (fallback ?? value) as T;
+    }
+  }
+  return value as T;
 }
 
 // ─── Document Version Management ─────────────────────────────────────────────
