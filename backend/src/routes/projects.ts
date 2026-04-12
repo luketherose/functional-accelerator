@@ -90,7 +90,7 @@ router.delete('/:id', (req: Request, res: Response) => {
         if (normalizedPath.startsWith(UPLOADS_BASE)) {
           fs.unlinkSync(normalizedPath);
         }
-      } catch (_) {}
+      } catch (err) { console.warn('[projects] Could not delete file from disk:', file.path, err); }
     }
 
     db.prepare('DELETE FROM projects WHERE id = ?').run(req.params.id);

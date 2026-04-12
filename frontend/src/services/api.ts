@@ -255,9 +255,21 @@ export const uatApi = {
     ).then(r => r.data),
 };
 
+function isUATAnalysisResult(obj: unknown): obj is UATAnalysisResult {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    'executiveSummary' in (obj as object) &&
+    'totalDefects' in (obj as object)
+  );
+}
+
 export function parseUATResult(analysis: UATAnalysis): UATAnalysisResult | null {
   if (!analysis.result_json) return null;
-  try { return JSON.parse(analysis.result_json) as UATAnalysisResult; } catch { return null; }
+  try {
+    const parsed = JSON.parse(analysis.result_json);
+    return isUATAnalysisResult(parsed) ? parsed : null;
+  } catch { return null; }
 }
 
 // Helper to parse result_json from an analysis record

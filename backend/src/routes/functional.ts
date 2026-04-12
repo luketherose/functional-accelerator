@@ -153,8 +153,8 @@ router.get('/:projectId/runs/:runId', (req, res) => {
     const gaps = db.prepare("SELECT * FROM functional_gaps WHERE run_id = ? AND status = 'confirmed' ORDER BY gap_type, created_at").all(runId) as Array<FunctionalGap & { field_diffs: string }>;
     const coverage = db.prepare('SELECT * FROM coverage_reports WHERE run_id = ?').get(runId);
 
-    const asIsVersionIds: string[] = JSON.parse(run.as_is_version_ids);
-    const toBeVersionIds: string[] = JSON.parse(run.to_be_version_ids);
+    const asIsVersionIds: string[] = (() => { try { return JSON.parse(run.as_is_version_ids); } catch { return []; } })();
+    const toBeVersionIds: string[] = (() => { try { return JSON.parse(run.to_be_version_ids); } catch { return []; } })();
 
     const countComponents = (ids: string[]) => {
       if (ids.length === 0) return 0;

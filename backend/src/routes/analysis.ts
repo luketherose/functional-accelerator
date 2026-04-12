@@ -112,6 +112,9 @@ router.post('/:projectId/run', async (req: Request, res: Response) => {
 
     runAnalysisAsync(analysisId, projectId, project, files, prevFeedback, prevOQFeedback).catch((err) => {
       console.error('[analysis] Async error:', err);
+      const errMsg = err instanceof Error ? err.message : 'Unknown error';
+      db.prepare(`UPDATE analyses SET status = 'error', error_message = ? WHERE id = ?`).run(errMsg, analysisId);
+      db.prepare(`UPDATE projects SET status = 'draft', updated_at = datetime('now') WHERE id = ?`).run(projectId);
     });
 
   } catch (err: unknown) {
