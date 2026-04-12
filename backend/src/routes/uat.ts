@@ -216,7 +216,11 @@ router.get('/:projectId/taxonomy', (req: Request, res: Response) => {
     ).all(projectId) as { id: string; cluster_key: string; cluster_name: string; keywords: string; sort_order: number }[];
 
     if (rows.length > 0) {
-      res.json(rows.map(r => ({ ...r, keywords: JSON.parse(r.keywords) })));
+      res.json(rows.map(r => {
+        let keywords: string[] = [];
+        try { keywords = JSON.parse(r.keywords); } catch { /* keep empty array */ }
+        return { ...r, keywords };
+      }));
     } else {
       // Return defaults (not yet saved to DB)
       res.json(DEFAULT_TAXONOMY.map((c, i) => ({ id: null, cluster_key: c.key, cluster_name: c.name, keywords: c.keywords, sort_order: i })));
@@ -279,7 +283,11 @@ router.post('/:projectId/recluster', async (req: Request, res: Response) => {
     ).all(projectId) as { cluster_key: string; cluster_name: string; keywords: string }[];
 
     const taxonomy = configRows.length > 0
-      ? configRows.map(r => ({ key: r.cluster_key, name: r.cluster_name, keywords: JSON.parse(r.keywords) as string[] }))
+      ? configRows.map(r => {
+          let keywords: string[] = [];
+          try { keywords = JSON.parse(r.keywords) as string[]; } catch { /* keep empty */ }
+          return { key: r.cluster_key, name: r.cluster_name, keywords };
+        })
       : DEFAULT_TAXONOMY.map(c => ({ key: c.key, name: c.name, keywords: c.keywords }));
 
     // Get all ingestion runs for this project
@@ -351,8 +359,8 @@ async function reclusterAsync(
 router.get('/:projectId/defects/all', (req: Request, res: Response) => {
   try {
     const { projectId } = req.params as { projectId: string };
-    const limit = Math.min(parseInt((req.query.limit as string) || '500', 10), 1000);
-    const offset = parseInt((req.query.offset as string) || '0', 10);
+    const limit = Math.min(Math.max(parseInt((req.query.limit as string) || '500', 10) || 500, 1), 1000);
+    const offset = Math.max(parseInt((req.query.offset as string) || '0', 10) || 0, 0);
 
     const rows = db.prepare(`
       SELECT d.*, ir.file_name, ir.created_at as run_date
