@@ -59,7 +59,9 @@ const COL_ALIASES: Record<keyof Omit<Defect, 'rawRow'>, string[]> = {
 // ─── Priority normalization ───────────────────────────────────────────────────
 
 function normalizePriority(raw: string): Defect['priority'] {
-  const v = raw?.toLowerCase().trim() ?? '';
+  // Guard against excessively long input before applying regex (ReDoS protection)
+  const trimmed = (raw ?? '').slice(0, 100);
+  const v = trimmed.toLowerCase().trim();
   if (!v) return 'Unknown';
   // Numeric prefixes common in ALM severity: "1-Critical", "2-High", etc.
   if (/^1[^0-9]|critica|critical|blocker|highest|urgente|urgent/.test(v)) return 'Critical';

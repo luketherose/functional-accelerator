@@ -216,7 +216,11 @@ router.get('/:projectId/taxonomy', (req: Request, res: Response) => {
     ).all(projectId) as { id: string; cluster_key: string; cluster_name: string; keywords: string; sort_order: number }[];
 
     if (rows.length > 0) {
-      res.json(rows.map(r => ({ ...r, keywords: JSON.parse(r.keywords) })));
+      res.json(rows.map(r => {
+        let keywords: string[] = [];
+        try { keywords = JSON.parse(r.keywords); } catch { /* malformed DB row — treat as empty */ }
+        return { ...r, keywords };
+      }));
     } else {
       // Return defaults (not yet saved to DB)
       res.json(DEFAULT_TAXONOMY.map((c, i) => ({ id: null, cluster_key: c.key, cluster_name: c.name, keywords: c.keywords, sort_order: i })));
@@ -598,6 +602,8 @@ router.post('/:projectId/:analysisId/ai-chat', async (req: Request, res: Respons
     };
 
     if (!message?.trim()) return res.status(400).json({ error: 'message is required' });
+    if (message.length > 10_000) return res.status(400).json({ error: 'message too long (max 10000 chars)' });
+    if (!Array.isArray(history) || history.length > 50) return res.status(400).json({ error: 'invalid history' });
 
     const analysis = db.prepare(
       'SELECT id, version_name, created_at, defect_count, result_json FROM uat_analyses WHERE id = ? AND project_id = ? AND status = ?'

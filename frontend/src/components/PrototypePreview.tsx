@@ -17,10 +17,14 @@ export default function PrototypePreview({ html, instructions }: PrototypePrevie
   // Sanitize before injecting into iframe srcdoc
   const sanitized = hasHtml
     ? DOMPurify.sanitize(html, {
-        FORCE_BODY: false,
+        FORCE_BODY: true,
         WHOLE_DOCUMENT: true,
         ADD_TAGS: ['style', 'meta', 'link'],
         ADD_ATTR: ['charset', 'name', 'content', 'http-equiv', 'rel', 'href', 'type'],
+        // Explicitly block all inline event handler attributes
+        FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur',
+                      'onkeydown', 'onkeyup', 'onkeypress', 'onsubmit', 'onreset',
+                      'onchange', 'oninput', 'ondblclick', 'oncontextmenu'],
       })
     : '';
 
