@@ -9,6 +9,7 @@ import { parseALMExcel } from '../services/almParser';
 import { runUATPipeline } from '../services/uatPipeline';
 import { DEFAULT_TAXONOMY, classifyDefects } from '../services/taxonomy';
 import { suggestClusters } from '../services/clusterSuggestions';
+import { callClaudeChat } from '../services/claude';
 import type { UATAnalysis } from '../types';
 
 const router = Router();
@@ -216,7 +217,11 @@ router.get('/:projectId/taxonomy', (req: Request, res: Response) => {
     ).all(projectId) as { id: string; cluster_key: string; cluster_name: string; keywords: string; sort_order: number }[];
 
     if (rows.length > 0) {
-      res.json(rows.map(r => ({ ...r, keywords: JSON.parse(r.keywords) })));
+      res.json(rows.map(r => {
+        let keywords: string[] = [];
+        try { keywords = JSON.parse(r.keywords) as string[]; } catch { /* corrupted row — return empty */ }
+        return { ...r, keywords };
+      }));
     } else {
       // Return defaults (not yet saved to DB)
       res.json(DEFAULT_TAXONOMY.map((c, i) => ({ id: null, cluster_key: c.key, cluster_name: c.name, keywords: c.keywords, sort_order: i })));
@@ -279,7 +284,11 @@ router.post('/:projectId/recluster', async (req: Request, res: Response) => {
     ).all(projectId) as { cluster_key: string; cluster_name: string; keywords: string }[];
 
     const taxonomy = configRows.length > 0
-      ? configRows.map(r => ({ key: r.cluster_key, name: r.cluster_name, keywords: JSON.parse(r.keywords) as string[] }))
+      ? configRows.map(r => {
+          let keywords: string[] = [];
+          try { keywords = JSON.parse(r.keywords) as string[]; } catch { console.error(`[uat] corrupted keywords for cluster ${r.cluster_key}`); }
+          return { key: r.cluster_key, name: r.cluster_name, keywords };
+        })
       : DEFAULT_TAXONOMY.map(c => ({ key: c.key, name: c.name, keywords: c.keywords }));
 
     // Get all ingestion runs for this project
@@ -704,7 +713,6 @@ ${executiveSummary ? `## Pipeline Executive Summary\n${executiveSummary}` : ''}
 - Reply in the same language as the user's message (Italian if Italian, English if English).
 - Do NOT invent data — if something is not in the context above, say so.`;
 
-    const { callClaudeChat } = await import('../services/claude');
     const response = await callClaudeChat(systemPrompt, [
       ...history,
       { role: 'user', content: message },
