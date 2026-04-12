@@ -2,6 +2,7 @@ import { FileBucket } from '../types';
 import db from '../db';
 import { parseFile } from '../services/fileParsing';
 import path from 'path';
+import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { Router, Request, Response } from 'express';
 
@@ -81,7 +82,6 @@ router.delete('/:id', (req: Request, res: Response) => {
 
     // Delete uploaded files from disk
     const files = db.prepare('SELECT path FROM files WHERE project_id = ?').all(req.params.id) as { path: string }[];
-    const fs = require('fs');
     for (const file of files) {
       try { fs.unlinkSync(file.path); } catch (_) {}
     }
