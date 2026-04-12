@@ -277,24 +277,33 @@ export default function UATDashboard({ result, analysis, projectName, fileName }
   const [rpPrio,    setRpPrio]    = useState<'high'|'medium'|'low'|null>(null);
   const [rpApp,     setRpApp]     = useState<string|null>(null);
 
-  const maxRiskScore = Math.max(...result.byApplication.map(a => a.riskScore), 1);
+  // Defensive fallbacks: Claude may return partial data with missing array fields
+  const byApplication     = result.byApplication     ?? [];
+  const byPriority        = result.byPriority        ?? [];
+  const byModule          = result.byModule          ?? [];
+  const topDefects        = result.topDefects        ?? [];
+  const riskAreas         = result.riskAreas         ?? [];
+  const preventionActions = result.preventionActions ?? [];
+  const recurringPatterns = result.recurringPatterns ?? [];
+
+  const maxRiskScore = Math.max(...byApplication.map(a => a.riskScore), 1);
 
   // ── Derived unique options ───────────────────────────────────────────────────
-  const raApps  = [...new Set(result.riskAreas.flatMap(a => a.relatedApplications))].slice(0, 6);
-  const paApps  = [...new Set(result.preventionActions.map(a => a.targetApplication))].slice(0, 6);
-  const rpApps  = [...new Set(result.recurringPatterns.flatMap(p => p.applications))].slice(0, 6);
+  const raApps  = [...new Set(riskAreas.flatMap(a => a.relatedApplications))].slice(0, 6);
+  const paApps  = [...new Set(preventionActions.map(a => a.targetApplication))].slice(0, 6);
+  const rpApps  = [...new Set(recurringPatterns.flatMap(p => p.applications))].slice(0, 6);
 
   // ── Filtered data ────────────────────────────────────────────────────────────
-  const filteredRiskAreas = result.riskAreas.filter(a =>
+  const filteredRiskAreas = riskAreas.filter(a =>
     (!raRisk || a.riskLevel === raRisk) &&
     (!raApp  || a.relatedApplications.includes(raApp))
   );
-  const filteredPrevActions = result.preventionActions.filter(a =>
+  const filteredPrevActions = preventionActions.filter(a =>
     (!paPrio   || a.priority === paPrio) &&
     (!paApp    || a.targetApplication === paApp) &&
     (!paEffort || a.effort === paEffort)
   );
-  const filteredPatterns = result.recurringPatterns.filter(p =>
+  const filteredPatterns = recurringPatterns.filter(p =>
     (!rpPrio || p.priority === rpPrio) &&
     (!rpApp  || p.applications.includes(rpApp))
   );
@@ -339,17 +348,17 @@ export default function UATDashboard({ result, analysis, projectName, fileName }
         <div className="card p-4">
           <p className="text-xs text-text-muted mb-1">{t('dashboard.criticalHigh')}</p>
           <p className="text-2xl font-bold text-red-600">
-            {result.byPriority.filter(p => p.priority === 'Critical' || p.priority === 'High').reduce((s, p) => s + p.count, 0)}
+            {byPriority.filter(p => p.priority === 'Critical' || p.priority === 'High').reduce((s, p) => s + p.count, 0)}
           </p>
         </div>
         <div className="card p-4">
           <p className="text-xs text-text-muted mb-1">{t('dashboard.appsImpacted')}</p>
-          <p className="text-2xl font-bold text-text-primary">{result.byApplication.length}</p>
+          <p className="text-2xl font-bold text-text-primary">{byApplication.length}</p>
         </div>
       </div>
 
       {/* ── WAW drill-down ───────────────────────────────────────── */}
-      {result.byApplication.length > 0 && <WawDrillDown result={result} />}
+      {byApplication.length > 0 && <WawDrillDown result={result} />}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
 
@@ -368,7 +377,7 @@ export default function UATDashboard({ result, analysis, projectName, fileName }
             ))}
           </div>
           <div className="space-y-0.5">
-            {result.byApplication.map(stat => (
+            {byApplication.map(stat => (
               <ApplicationBar key={stat.application} stat={stat} maxScore={maxRiskScore} />
             ))}
           </div>
@@ -378,7 +387,7 @@ export default function UATDashboard({ result, analysis, projectName, fileName }
         <div className="card p-5">
           <SectionHeader title={t('dashboard.priorityDist')} />
           <div className="space-y-3">
-            {result.byPriority.map(p => (
+            {byPriority.map(p => (
               <div key={p.priority}>
                 <div className="flex justify-between text-xs mb-1">
                   <span className="font-medium text-text-primary">{p.priority}</span>
@@ -398,7 +407,7 @@ export default function UATDashboard({ result, analysis, projectName, fileName }
           <div className="mt-5 pt-4 border-t border-surface-border">
             <p className="text-xs font-semibold text-text-primary mb-3">{t('dashboard.topModules')}</p>
             <div className="space-y-1.5">
-              {result.byModule.slice(0, 8).map(m => (
+              {byModule.slice(0, 8).map(m => (
                 <div key={m.module} className="flex items-center gap-2">
                   <span className="flex-1 text-xs text-text-secondary truncate">{m.module}</span>
                   <span className="text-[10px] text-red-600 font-medium w-16 text-right">{m.criticalCount} crit/high</span>
@@ -428,7 +437,7 @@ export default function UATDashboard({ result, analysis, projectName, fileName }
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
 
         {/* ── Risk areas ────────────────────────────────────────────── */}
-        {result.riskAreas.length > 0 && (
+        {riskAreas.length > 0 && (
           <div className="card p-5">
             <SectionHeader title={t('dashboard.riskAreas')} subtitle={t('dashboard.riskAreasSub')} />
             {/* Filters */}
@@ -475,7 +484,7 @@ export default function UATDashboard({ result, analysis, projectName, fileName }
         )}
 
         {/* ── Prevention actions ────────────────────────────────────── */}
-        {result.preventionActions.length > 0 && (
+        {preventionActions.length > 0 && (
           <div className="card p-5">
             <SectionHeader title={t('dashboard.preventionActions')} subtitle={t('dashboard.preventionActionsSub')} />
             {/* Filters */}
@@ -527,7 +536,7 @@ export default function UATDashboard({ result, analysis, projectName, fileName }
       </div>
 
       {/* ── Recurring patterns ───────────────────────────────────────── */}
-      {result.recurringPatterns.length > 0 && (
+      {recurringPatterns.length > 0 && (
         <div className="card p-5">
           <div className="flex flex-col sm:flex-row sm:items-start gap-3 mb-4">
             <div className="flex-1">
@@ -573,14 +582,14 @@ export default function UATDashboard({ result, analysis, projectName, fileName }
       )}
 
       {/* ── Top defects (bottom) ──────────────────────────────────────── */}
-      {result.topDefects.length > 0 && (
+      {topDefects.length > 0 && (
         <div className="card p-5">
           <SectionHeader
             title={t('dashboard.topDefects')}
-            subtitle={t('dashboard.topDefectsSub', { count: result.topDefects.length })}
+            subtitle={t('dashboard.topDefectsSub', { count: topDefects.length })}
           />
           <div className="space-y-2">
-            {result.topDefects.map(d => {
+            {topDefects.map(d => {
               const isOpen = expandedDefect === d.id;
               return (
                 <div key={d.id} className="border border-surface-border rounded-xl overflow-hidden">
