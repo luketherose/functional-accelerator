@@ -6,8 +6,16 @@ import type { DocumentVersion, FunctionalAnalysisRun, FunctionalGap } from '../t
 
 const router = Router();
 
-function parseJsonField<T>(value: unknown): T {
-  return typeof value === 'string' ? JSON.parse(value) as T : value as T;
+function parseJsonField<T>(value: unknown, fallback?: T): T {
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      console.error('[functional] Failed to parse JSON field, using fallback. Value:', value?.slice?.(0, 200));
+      return (fallback ?? value) as T;
+    }
+  }
+  return value as T;
 }
 
 // ─── Document Version Management ─────────────────────────────────────────────
@@ -145,8 +153,8 @@ router.get('/:projectId/runs/:runId', (req, res) => {
     const gaps = db.prepare("SELECT * FROM functional_gaps WHERE run_id = ? AND status = 'confirmed' ORDER BY gap_type, created_at").all(runId) as Array<FunctionalGap & { field_diffs: string }>;
     const coverage = db.prepare('SELECT * FROM coverage_reports WHERE run_id = ?').get(runId);
 
-    const asIsVersionIds: string[] = JSON.parse(run.as_is_version_ids);
-    const toBeVersionIds: string[] = JSON.parse(run.to_be_version_ids);
+    const asIsVersionIds: string[] = (() => { try { return JSON.parse(run.as_is_version_ids); } catch { return []; } })();
+    const toBeVersionIds: string[] = (() => { try { return JSON.parse(run.to_be_version_ids); } catch { return []; } })();
 
     const countComponents = (ids: string[]) => {
       if (ids.length === 0) return 0;
@@ -176,7 +184,12 @@ router.get('/:projectId/runs/:runId/gaps', (req, res) => {
     let query = "SELECT fg.*, ap.as_is_component_id, ap.to_be_component_id FROM functional_gaps fg JOIN alignment_pairs ap ON fg.alignment_pair_id = ap.id WHERE fg.run_id = ? AND fg.status = 'confirmed'";
     const params: unknown[] = [runId];
     if (gap_type) { query += ' AND fg.gap_type = ?'; params.push(gap_type); }
-    if (min_confidence) { query += ' AND fg.confidence >= ?'; params.push(parseFloat(min_confidence as string)); }
+    if (min_confidence) {
+      const minConf = parseFloat(min_confidence as string);
+      if (isNaN(minConf)) return res.status(400).json({ error: 'min_confidence must be a number' });
+      query += ' AND fg.confidence >= ?';
+      params.push(minConf);
+    }
     query += ' ORDER BY fg.gap_type, fg.created_at';
 
     const gaps = db.prepare(query).all(...params) as Array<FunctionalGap & { field_diffs: string }>;

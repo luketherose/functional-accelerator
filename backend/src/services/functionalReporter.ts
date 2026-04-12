@@ -5,7 +5,7 @@ import type { FunctionalGap, FunctionalAnalysisRun, CoverageReport, FunctionalRu
 function parseGap(row: Record<string, unknown>): FunctionalGap {
   return {
     ...row,
-    field_diffs: typeof row.field_diffs === 'string' ? JSON.parse(row.field_diffs) : (row.field_diffs ?? []),
+    field_diffs: typeof row.field_diffs === 'string' ? (() => { try { return JSON.parse(row.field_diffs as string); } catch { return []; } })() : (row.field_diffs ?? []),
   } as FunctionalGap;
 }
 
@@ -21,7 +21,7 @@ export function computeCoverage(runId: string): CoverageReport {
   if (existing) return existing;
 
   const run = db.prepare('SELECT as_is_version_ids FROM functional_analysis_runs WHERE id = ?').get(runId) as { as_is_version_ids: string } | undefined;
-  const asIsVersionIds: string[] = run ? JSON.parse(run.as_is_version_ids) : [];
+  const asIsVersionIds: string[] = run ? (() => { try { return JSON.parse(run.as_is_version_ids); } catch { return []; } })() : [];
   const totalAsIs = countComponents(asIsVersionIds);
 
   const counts = db.prepare(`

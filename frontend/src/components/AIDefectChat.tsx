@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Loader2, Sparkles, Bot, User, AlertCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import axios from 'axios';
 import type { UATAnalysis, AIChatMessage } from '../types';
 import { uatApi } from '../services/api';
 
@@ -134,7 +135,9 @@ export default function AIDefectChat({ analysis, projectId }: Props) {
       const { response } = await uatApi.aiChat(projectId, analysis.id, trimmed, messages);
       setMessages([...nextHistory, { role: 'assistant', content: response }]);
     } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? t('ai.errorDefault');
+      const msg = axios.isAxiosError(e)
+        ? (e.response?.data?.error ?? t('ai.errorDefault'))
+        : (e instanceof Error ? e.message : t('ai.errorDefault'));
       setError(msg);
       // Remove the optimistically added user message so the user can retry
       setMessages(messages);

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -46,7 +46,7 @@ export default function ProjectDetailPage() {
   const [analysisPanel, setAnalysisPanel] = useState<AnalysisPanel>('documents');
   const [selectedAnalysis, setSelectedAnalysis] = useState<Analysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [, setPollingId] = useState<ReturnType<typeof setInterval> | null>(null);
+  const reindexPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Edit project state
   const [editing, setEditing] = useState(false);
@@ -97,19 +97,30 @@ export default function ProjectDetailPage() {
   const handleReindex = async () => {
     if (!id) return;
     setReindexing(true);
+    let poll: ReturnType<typeof setInterval> | null = null;
     try {
       await filesApi.reindex(id);
-      const poll = setInterval(async () => {
+      if (reindexPollRef.current) clearInterval(reindexPollRef.current);
+      reindexPollRef.current = setInterval(async () => {
         const status = await filesApi.indexStatus(id).catch(() => null);
         if (status) {
           setIndexStatus(status);
-          if (status.pending === 0) { clearInterval(poll); setReindexing(false); }
+          if (status.pending === 0) {
+            clearInterval(reindexPollRef.current!);
+            reindexPollRef.current = null;
+            setReindexing(false);
+          }
         }
       }, 3000);
     } catch {
+      if (poll) clearInterval(poll);
       setReindexing(false);
     }
   };
+
+  useEffect(() => {
+    return () => { if (reindexPollRef.current) clearInterval(reindexPollRef.current); };
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -181,7 +192,7 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     const activeRun = functionalRuns.find(r => r.status !== 'done' && r.status !== 'error');
     if (!activeRun || !project) return;
-    const id = setInterval(async () => {
+    const pollId = setInterval(async () => {
       try {
         const runs = await functionalApi.listRuns(project.id);
         setFunctionalRuns(runs);
@@ -189,7 +200,7 @@ export default function ProjectDetailPage() {
         if (wasActive?.status === 'done') setSelectedFunctionalRun(wasActive);
       } catch { /* keep polling */ }
     }, 3000);
-    return () => clearInterval(id);
+    return () => clearInterval(pollId);
   }, [functionalRuns, project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -207,7 +218,6 @@ export default function ProjectDetailPage() {
           }
         } catch { /* keep polling */ }
       }, 2000);
-      setPollingId(interval);
       return () => clearInterval(interval);
     }
   }, [isAnalyzing, id]);

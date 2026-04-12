@@ -145,7 +145,8 @@ export default function UATTrend({ analyses, projectId }: Props) {
     return analyses
       .filter(a => a.status === 'done' && a.result_json)
       .map(a => {
-        const result = parseUATResult(a)!;
+        const result = parseUATResult(a);
+        if (!result) return null;
         const critEntry  = result.byPriority.find(p => p.priority === 'Critical');
         const highEntry  = result.byPriority.find(p => p.priority === 'High');
         const medEntry   = result.byPriority.find(p => p.priority === 'Medium');
@@ -165,6 +166,7 @@ export default function UATTrend({ analyses, projectId }: Props) {
           result,
         };
       })
+      .filter((r): r is RunPoint => r !== null)
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   }, [analyses]);
 

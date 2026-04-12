@@ -112,6 +112,9 @@ router.post('/:projectId/run', async (req: Request, res: Response) => {
 
     runAnalysisAsync(analysisId, projectId, project, files, prevFeedback, prevOQFeedback).catch((err) => {
       console.error('[analysis] Async error:', err);
+      const errMsg = err instanceof Error ? err.message : 'Unknown error';
+      db.prepare(`UPDATE analyses SET status = 'error', error_message = ? WHERE id = ?`).run(errMsg, analysisId);
+      db.prepare(`UPDATE projects SET status = 'draft', updated_at = datetime('now') WHERE id = ?`).run(projectId);
     });
 
   } catch (err: unknown) {
@@ -171,7 +174,7 @@ router.post('/:projectId/:analysisId/impact-prototype', tmpUpload.single('file')
     console.error('[analysis] Impact prototype error:', msg);
     res.status(500).json({ error: msg });
   } finally {
-    if (tmpFilePath && fs.existsSync(tmpFilePath)) {
+    if (tmpFilePath) {
       try { fs.unlinkSync(tmpFilePath); } catch (_) {}
     }
   }
@@ -228,6 +231,8 @@ async function runAnalysisAsync(
 // GET /api/analysis/:projectId/:analysisId/feedback
 router.get('/:projectId/:analysisId/feedback', (req: Request, res: Response) => {
   try {
+    const analysis = db.prepare('SELECT id FROM analyses WHERE id = ? AND project_id = ?').get(req.params.analysisId, req.params.projectId);
+    if (!analysis) return res.status(404).json({ error: 'Analysis not found' });
     const rows = db.prepare('SELECT * FROM impact_feedback WHERE analysis_id = ?').all(req.params.analysisId);
     res.json(rows);
   } catch {
@@ -249,7 +254,7 @@ router.post('/:projectId/:analysisId/feedback', async (req: Request, res: Respon
     const existing = db.prepare('SELECT id FROM impact_feedback WHERE analysis_id = ? AND impact_id = ?')
       .get(req.params.analysisId, impactId) as { id: string } | undefined;
     if (existing) {
-      db.prepare("UPDATE impact_feedback SET sentiment = ?, motivation = ?, created_at = datetime('now') WHERE id = ?")
+      db.prepare('UPDATE impact_feedback SET sentiment = ?, motivation = ? WHERE id = ?')
         .run(sentiment, motivation ?? null, existing.id);
     } else {
       db.prepare('INSERT INTO impact_feedback (id, analysis_id, impact_id, sentiment, motivation) VALUES (?, ?, ?, ?, ?)')
@@ -332,6 +337,8 @@ router.post('/:projectId/:analysisId/impact-deepdive', async (req: Request, res:
 // GET /api/analysis/:projectId/:analysisId/open-question-feedback
 router.get('/:projectId/:analysisId/open-question-feedback', (req: Request, res: Response) => {
   try {
+    const analysis = db.prepare('SELECT id FROM analyses WHERE id = ? AND project_id = ?').get(req.params.analysisId, req.params.projectId);
+    if (!analysis) return res.status(404).json({ error: 'Analysis not found' });
     const rows = db.prepare('SELECT * FROM open_question_feedback WHERE analysis_id = ?').all(req.params.analysisId);
     res.json(rows);
   } catch {
@@ -351,7 +358,7 @@ router.post('/:projectId/:analysisId/open-question-feedback', (req: Request, res
     const existing = db.prepare('SELECT id FROM open_question_feedback WHERE analysis_id = ? AND question_text = ?')
       .get(req.params.analysisId, questionText) as { id: string } | undefined;
     if (existing) {
-      db.prepare("UPDATE open_question_feedback SET sentiment = ?, answer = ?, created_at = datetime('now') WHERE id = ?")
+      db.prepare('UPDATE open_question_feedback SET sentiment = ?, answer = ? WHERE id = ?')
         .run(sentiment ?? null, answer ?? null, existing.id);
     } else {
       db.prepare('INSERT INTO open_question_feedback (id, analysis_id, question_text, sentiment, answer) VALUES (?, ?, ?, ?, ?)')

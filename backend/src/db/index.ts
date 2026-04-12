@@ -151,6 +151,8 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_defects_project ON defects(project_id);
   CREATE INDEX IF NOT EXISTS idx_defects_ingestion ON defects(ingestion_run_id);
+  CREATE INDEX IF NOT EXISTS idx_defects_project_created ON defects(project_id, created_at DESC);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_defects_run_external_id ON defects(ingestion_run_id, external_id);
 
   CREATE TABLE IF NOT EXISTS cluster_assignments (
     id TEXT PRIMARY KEY,

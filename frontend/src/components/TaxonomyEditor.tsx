@@ -52,7 +52,7 @@ function ClusterRow({ cluster, onChange }: ClusterRowProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const addKeyword = (raw: string) => {
-    const kw = raw.trim().toLowerCase();
+    const kw = raw.trim().toLowerCase().slice(0, 50);
     if (!kw || cluster.keywords.includes(kw)) return;
     onChange({ ...cluster, keywords: [...cluster.keywords, kw] });
     setNewKw('');
