@@ -190,7 +190,7 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     const activeRun = functionalRuns.find(r => r.status !== 'done' && r.status !== 'error');
     if (!activeRun || !project) return;
-    const id = setInterval(async () => {
+    const pollId = setInterval(async () => {
       try {
         const runs = await functionalApi.listRuns(project.id);
         setFunctionalRuns(runs);
@@ -198,7 +198,7 @@ export default function ProjectDetailPage() {
         if (wasActive?.status === 'done') setSelectedFunctionalRun(wasActive);
       } catch { /* keep polling */ }
     }, 3000);
-    return () => clearInterval(id);
+    return () => clearInterval(pollId);
   }, [functionalRuns, project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {

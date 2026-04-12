@@ -57,23 +57,25 @@ router.get('/:projectId/:analysisId/clusters', (req: Request, res: Response) => 
     ).get(analysisId, projectId);
     if (!analysis) return res.status(404).json({ error: 'UAT analysis not found' });
 
-    // Aggregate cluster_assignments to return cluster summaries with counts
+    // Aggregate cluster_assignments to return cluster summaries with counts.
+    // COALESCE(ro.overridden_priority, d.priority) ensures risk overrides are reflected.
     const rows = db.prepare(`
       SELECT
         ca.cluster_key,
         ca.cluster_name,
         COUNT(*) as defect_count,
-        SUM(CASE WHEN d.priority = 'Critical' THEN 1 ELSE 0 END) as critical_count,
-        SUM(CASE WHEN d.priority = 'High' THEN 1 ELSE 0 END) as high_count,
-        SUM(CASE WHEN d.priority = 'Medium' THEN 1 ELSE 0 END) as medium_count,
-        SUM(CASE WHEN d.priority = 'Low' THEN 1 ELSE 0 END) as low_count
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Critical' THEN 1 ELSE 0 END) as critical_count,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'High' THEN 1 ELSE 0 END) as high_count,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Medium' THEN 1 ELSE 0 END) as medium_count,
+        SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Low' THEN 1 ELSE 0 END) as low_count
       FROM cluster_assignments ca
       JOIN defects d ON d.id = ca.defect_id
+      LEFT JOIN risk_overrides ro ON ro.defect_id = d.id
       WHERE ca.uat_analysis_id = ?
       GROUP BY ca.cluster_key, ca.cluster_name
-      ORDER BY (SUM(CASE WHEN d.priority = 'Critical' THEN 4 ELSE 0 END) +
-                SUM(CASE WHEN d.priority = 'High' THEN 2 ELSE 0 END) +
-                SUM(CASE WHEN d.priority = 'Medium' THEN 1 ELSE 0 END)) DESC
+      ORDER BY (SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Critical' THEN 4 ELSE 0 END) +
+                SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'High' THEN 2 ELSE 0 END) +
+                SUM(CASE WHEN COALESCE(ro.overridden_priority, d.priority) = 'Medium' THEN 1 ELSE 0 END)) DESC
     `).all(analysisId);
 
     res.json(rows);
@@ -216,7 +218,11 @@ router.get('/:projectId/taxonomy', (req: Request, res: Response) => {
     ).all(projectId) as { id: string; cluster_key: string; cluster_name: string; keywords: string; sort_order: number }[];
 
     if (rows.length > 0) {
-      res.json(rows.map(r => ({ ...r, keywords: JSON.parse(r.keywords) })));
+      res.json(rows.map(r => {
+        let keywords: string[] = [];
+        try { keywords = JSON.parse(r.keywords); } catch { /* keep empty array */ }
+        return { ...r, keywords };
+      }));
     } else {
       // Return defaults (not yet saved to DB)
       res.json(DEFAULT_TAXONOMY.map((c, i) => ({ id: null, cluster_key: c.key, cluster_name: c.name, keywords: c.keywords, sort_order: i })));
@@ -279,7 +285,11 @@ router.post('/:projectId/recluster', async (req: Request, res: Response) => {
     ).all(projectId) as { cluster_key: string; cluster_name: string; keywords: string }[];
 
     const taxonomy = configRows.length > 0
-      ? configRows.map(r => ({ key: r.cluster_key, name: r.cluster_name, keywords: JSON.parse(r.keywords) as string[] }))
+      ? configRows.map(r => {
+          let keywords: string[] = [];
+          try { keywords = JSON.parse(r.keywords) as string[]; } catch { /* keep empty */ }
+          return { key: r.cluster_key, name: r.cluster_name, keywords };
+        })
       : DEFAULT_TAXONOMY.map(c => ({ key: c.key, name: c.name, keywords: c.keywords }));
 
     // Get all ingestion runs for this project
@@ -351,8 +361,8 @@ async function reclusterAsync(
 router.get('/:projectId/defects/all', (req: Request, res: Response) => {
   try {
     const { projectId } = req.params as { projectId: string };
-    const limit = Math.min(parseInt((req.query.limit as string) || '500', 10), 1000);
-    const offset = parseInt((req.query.offset as string) || '0', 10);
+    const limit = Math.min(Math.max(parseInt((req.query.limit as string) || '500', 10) || 500, 1), 1000);
+    const offset = Math.max(parseInt((req.query.offset as string) || '0', 10) || 0, 0);
 
     const rows = db.prepare(`
       SELECT d.*, ir.file_name, ir.created_at as run_date
@@ -818,7 +828,8 @@ router.get('/:projectId/:analysisId/export/defects.xlsx', (req: Request, res: Re
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
     const safeName = (project?.name ?? 'project').replace(/[^a-z0-9]/gi, '-').toLowerCase();
-    const fileName = `${safeName}-${analysis.version_name.replace(/\s+/g, '-').toLowerCase()}-defects.xlsx`;
+    const safeVersion = analysis.version_name.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+    const fileName = `${safeName}-${safeVersion}-defects.xlsx`;
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
