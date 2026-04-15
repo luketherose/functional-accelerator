@@ -6,6 +6,8 @@ import { v4 as uuidv4 } from 'uuid';
 import db from '../db';
 import { parseFile } from '../services/fileParsing';
 import { indexFile, deleteFileChunks } from '../services/vectorStore';
+import { getQueueStats } from '../services/enrichmentQueue';
+import { getEntityCount } from '../services/knowledgeGraph';
 import { FileBucket } from '../types';
 
 const router = Router();
@@ -146,7 +148,7 @@ router.delete('/:projectId/:fileId', (req: Request, res: Response) => {
   }
 });
 
-// GET /api/files/:projectId/index-status — how many files are indexed vs total
+// GET /api/files/:projectId/index-status — indexing + enrichment status
 router.get('/:projectId/index-status', (req: Request, res: Response) => {
   try {
     const projectId = req.params.projectId as string;
@@ -154,7 +156,15 @@ router.get('/:projectId/index-status', (req: Request, res: Response) => {
     const indexed = (db.prepare(
       'SELECT COUNT(DISTINCT file_id) as c FROM file_chunks WHERE project_id = ?'
     ).get(projectId) as { c: number }).c;
-    res.json({ total, indexed, pending: total - indexed });
+    const enrichment = getQueueStats(projectId);
+    const graphEntities = getEntityCount(projectId);
+    res.json({
+      total,
+      indexed,
+      pending: total - indexed,
+      enrichment,
+      graphEntities,
+    });
   } catch {
     res.status(500).json({ error: 'Failed to fetch index status' });
   }

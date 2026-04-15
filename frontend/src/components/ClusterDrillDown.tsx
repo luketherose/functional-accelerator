@@ -8,6 +8,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import {
   ChevronRight, ChevronLeft, X, AlertTriangle, Info,
   Layers, FileSearch, Tag, User, Calendar, CheckCircle2,
@@ -355,10 +356,7 @@ interface DefectDrawerProps {
 function DefectDrawer({ defect, projectId, onClose, onOverrideChange }: DefectDrawerProps) {
   const { t } = useTranslation();
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div className="absolute inset-0 bg-black/20" onClick={onClose} />
-
-      <div className="relative z-10 w-[520px] max-w-full h-full bg-white shadow-2xl flex flex-col overflow-hidden">
+    <div className="w-full h-full bg-white shadow-2xl flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-start justify-between gap-3 p-4 border-b border-surface-border bg-surface-muted/30 shrink-0">
           <div className="min-w-0">
@@ -437,7 +435,6 @@ function DefectDrawer({ defect, projectId, onClose, onOverrideChange }: DefectDr
             </div>
           )}
         </div>
-      </div>
     </div>
   );
 }
@@ -461,10 +458,20 @@ interface ClusterDrillDownProps {
 export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDownProps) {
   const { t } = useTranslation();
   const [selectedCluster, setSelectedCluster] = useState<ClusterSummary | null>(null);
+  const [direction, setDirection] = useState<1 | -1>(1); // 1 = forward (grid→table), -1 = back
   const [defects, setDefects] = useState<DefectRow[]>([]);
   const [loadingDefects, setLoadingDefects] = useState(false);
   const [selectedDefect, setSelectedDefect] = useState<DefectRow | null>(null);
   const [filterPriority, setFilterPriority] = useState<string | null>(null);
+
+  function goToCluster(cluster: ClusterSummary) {
+    setDirection(1);
+    setSelectedCluster(cluster);
+  }
+  function goBack() {
+    setDirection(-1);
+    setSelectedCluster(null);
+  }
 
   const result = parseUATResult(analysis);
   const clusters: ClusterSummary[] = result?.clusterSummaries ?? [];
@@ -510,6 +517,12 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
     );
   }
 
+  const slideVariants = {
+    enter: (dir: number) => ({ opacity: 0, x: dir * 40 }),
+    center: { opacity: 1, x: 0 },
+    exit:  (dir: number) => ({ opacity: 0, x: dir * -40 }),
+  };
+
   // ── Level 2: defect table ────────────────────────────────────────────────────
   if (selectedCluster) {
     const filteredDefects = filterPriority
@@ -524,11 +537,21 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
 
     return (
       <>
-        <div className="flex flex-col h-full">
+        <AnimatePresence mode="wait" custom={direction}>
+          <motion.div
+            key={selectedCluster.clusterKey}
+            custom={direction}
+            variants={slideVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            className="flex flex-col h-full"
+          >
           {/* Breadcrumb */}
           <div className="flex items-center gap-2 px-4 py-3 border-b border-surface-border bg-surface-muted/30 shrink-0">
             <button
-              onClick={() => setSelectedCluster(null)}
+              onClick={goBack}
               className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-purple-deep transition-colors"
             >
               <ChevronLeft size={14} /> {t('clusters.allClusters')}
@@ -620,17 +643,41 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
               </table>
             )}
           </div>
-        </div>
+          </motion.div>
+        </AnimatePresence>
 
-        {/* Detail drawer */}
-        {selectedDefect && (
-          <DefectDrawer
-            defect={selectedDefect}
-            projectId={projectId}
-            onClose={() => setSelectedDefect(null)}
-            onOverrideChange={handleOverrideChange}
-          />
-        )}
+        {/* Detail drawer — animated slide-in from right */}
+        <AnimatePresence>
+          {selectedDefect && (
+            <motion.div
+              key="drawer"
+              className="fixed inset-0 z-50 flex justify-end"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+            >
+              <motion.div
+                className="absolute inset-0 bg-black/20"
+                onClick={() => setSelectedDefect(null)}
+              />
+              <motion.div
+                className="relative z-10 w-[520px] max-w-full h-full"
+                initial={{ x: '100%' }}
+                animate={{ x: 0 }}
+                exit={{ x: '100%' }}
+                transition={{ duration: 0.22, ease: [0.32, 0.72, 0, 1] }}
+              >
+                <DefectDrawer
+                  defect={selectedDefect}
+                  projectId={projectId}
+                  onClose={() => setSelectedDefect(null)}
+                  onOverrideChange={handleOverrideChange}
+                />
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </>
     );
   }
@@ -640,7 +687,17 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
   const visibleClusters = clusters.filter(c => c.clusterKey !== 'other');
 
   return (
-    <div className="overflow-y-auto h-full">
+    <AnimatePresence mode="wait" custom={direction}>
+      <motion.div
+        key="grid"
+        custom={direction}
+        variants={slideVariants}
+        initial="enter"
+        animate="center"
+        exit="exit"
+        transition={{ duration: 0.2, ease: 'easeOut' }}
+        className="overflow-y-auto h-full"
+      >
       <div className="p-4 space-y-4">
         {/* Summary bar */}
         <div className="flex items-center gap-4 p-3 rounded-lg bg-surface-muted/50 border border-surface-border text-xs text-text-secondary">
@@ -659,37 +716,39 @@ export default function ClusterDrillDown({ analysis, projectId }: ClusterDrillDo
           <span className="ml-auto text-text-muted">{t('clusters.clickToDrillDown')}</span>
         </div>
 
-        {/* Named cluster grid */}
+        {/* Named cluster grid — staggered entrance */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {visibleClusters.map(cluster => (
-            <ClusterCard
+          {visibleClusters.map((cluster, i) => (
+            <motion.div
               key={cluster.clusterKey}
-              cluster={cluster}
-              onClick={() => setSelectedCluster(cluster)}
-            />
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.18, delay: i * 0.04, ease: 'easeOut' }}
+            >
+              <ClusterCard
+                cluster={cluster}
+                onClick={() => goToCluster(cluster)}
+              />
+            </motion.div>
           ))}
         </div>
 
         {/* "Other" cluster drill-through + suggestion banner */}
         {otherCluster && otherCluster.defectCount > 0 && (
           <div className="space-y-2.5">
-            {/* Other cluster card (still clickable) */}
             <ClusterCard
               cluster={otherCluster}
-              onClick={() => setSelectedCluster(otherCluster)}
+              onClick={() => goToCluster(otherCluster)}
             />
-            {/* Phase 2D: discover hidden themes */}
             <ClusterSuggestions
               projectId={projectId}
               otherDefectCount={otherCluster.defectCount}
-              onAdopted={() => {
-                // Re-load cluster data after adopt — parent would need to refresh.
-                // For now, show a note; user can navigate away and back.
-              }}
+              onAdopted={() => {}}
             />
           </div>
         )}
       </div>
-    </div>
+      </motion.div>
+    </AnimatePresence>
   );
 }

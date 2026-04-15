@@ -211,6 +211,81 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_risk_overrides_project ON risk_overrides(project_id);
 `);
 
+// --- FTS5 full-text search index (BM25) for hybrid retrieval ---
+// External-content-like approach: we store chunk_id as UNINDEXED so we can
+// join back to file_chunks. The FTS5 virtual table is kept in sync manually
+// by bm25Store.indexChunksFTS() / deleteChunksFTS().
+db.exec(`
+  CREATE VIRTUAL TABLE IF NOT EXISTS file_chunks_fts USING fts5(
+    chunk_id   UNINDEXED,
+    project_id UNINDEXED,
+    bucket     UNINDEXED,
+    section_path,
+    content,
+    tokenize='unicode61'
+  )
+`);
+
+// --- Knowledge Graph tables ---
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS kg_entities (
+    id           TEXT PRIMARY KEY,
+    project_id   TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    file_id      TEXT REFERENCES files(id) ON DELETE SET NULL,
+    chunk_id     TEXT REFERENCES file_chunks(id) ON DELETE SET NULL,
+    entity_type  TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    description  TEXT,
+    source_quote TEXT,
+    section_path TEXT,
+    confidence   REAL NOT NULL DEFAULT 0.8,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_kg_entities_project      ON kg_entities(project_id);
+  CREATE INDEX IF NOT EXISTS idx_kg_entities_type         ON kg_entities(project_id, entity_type);
+  CREATE INDEX IF NOT EXISTS idx_kg_entities_chunk        ON kg_entities(chunk_id);
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS kg_relations (
+    id                TEXT PRIMARY KEY,
+    project_id        TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    source_entity_id  TEXT NOT NULL REFERENCES kg_entities(id) ON DELETE CASCADE,
+    target_entity_id  TEXT NOT NULL REFERENCES kg_entities(id) ON DELETE CASCADE,
+    relation_type     TEXT NOT NULL,
+    confidence        REAL NOT NULL DEFAULT 0.7,
+    source_quote      TEXT,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(source_entity_id, target_entity_id, relation_type)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_kg_relations_project ON kg_relations(project_id);
+  CREATE INDEX IF NOT EXISTS idx_kg_relations_source  ON kg_relations(source_entity_id);
+  CREATE INDEX IF NOT EXISTS idx_kg_relations_target  ON kg_relations(target_entity_id);
+`);
+
+// --- Enrichment job queue ---
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS enrichment_jobs (
+    id         TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    file_id    TEXT REFERENCES files(id) ON DELETE CASCADE,
+    job_type   TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'pending',
+    payload    TEXT,
+    error      TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_enrichment_jobs_status  ON enrichment_jobs(status);
+  CREATE INDEX IF NOT EXISTS idx_enrichment_jobs_project ON enrichment_jobs(project_id);
+`);
+
 // --- Functional Gap Analysis Engine tables ---
 
 db.exec(`
@@ -331,6 +406,30 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_functional_gaps_run ON functional_gaps(run_id);
   CREATE INDEX IF NOT EXISTS idx_gap_impacts_gap ON gap_impacts(gap_id);
 `);
+
+// --- Migration: rebuild FTS5 index from file_chunks ---
+// We rebuild every startup to ensure consistency (fast — SQLite BLOB scan is cheap).
+// FTS5 COUNT(*) without MATCH is unreliable, so we always rebuild.
+{
+  const chunkCount = (db.prepare('SELECT COUNT(*) as c FROM file_chunks').get() as { c: number }).c;
+
+  if (chunkCount > 0) {
+    console.log(`[DB] Rebuilding FTS5 index from ${chunkCount} file_chunks…`);
+    const chunks = db.prepare(
+      'SELECT id, project_id, bucket, section_path, content FROM file_chunks'
+    ).all() as { id: string; project_id: string; bucket: string; section_path: string; content: string }[];
+
+    const ins = db.prepare(
+      'INSERT INTO file_chunks_fts(chunk_id, project_id, bucket, section_path, content) VALUES (?, ?, ?, ?, ?)'
+    );
+    const rebuild = db.transaction(() => {
+      db.exec('DELETE FROM file_chunks_fts');
+      for (const c of chunks) ins.run(c.id, c.project_id, c.bucket, c.section_path, c.content);
+    });
+    rebuild();
+    console.log(`[DB] FTS5 rebuild complete.`);
+  }
+}
 
 // --- Migration: add progress_step to analyses if missing ---
 const analysesCols = db.prepare("PRAGMA table_info(analyses)").all() as { name: string }[];

@@ -6,6 +6,9 @@ import { Request, Response, NextFunction } from 'express';
 // Initialize DB on startup
 import './db';
 
+// Resume any pending enrichment jobs from a previous session
+import { resumePendingJobs } from './services/enrichmentQueue';
+
 import projectsRouter from './routes/projects';
 import filesRouter from './routes/files';
 import analysisRouter from './routes/analysis';
@@ -58,4 +61,7 @@ app.use((_req, res) => {
 app.listen(PORT, () => {
   console.log(`\n🚀 Functional Accelerator backend running on http://localhost:${PORT}`);
   console.log(`   Model: ${process.env.CLAUDE_MODEL || 'claude-opus-4-5'}\n`);
+
+  // Resume any pending enrichment jobs after startup
+  setImmediate(resumePendingJobs);
 });

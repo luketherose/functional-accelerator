@@ -31,12 +31,8 @@ import {
 import { callClaudeStep } from './claude';
 import { chunkDocument, formatAllChunks, formatChunksAsContext } from './chunking';
 import { retrieveTopChunks, mergeChunkLists, verifyQuoteInChunks, retrieveBySection } from './retrieval';
-import {
-  hasIndexedChunks,
-  multiQuerySearch,
-  formatRetrievedChunks,
-  semanticSearch,
-} from './vectorStore';
+import { hasIndexedChunks, formatRetrievedChunks } from './vectorStore';
+import { orchestrateRetrieval, classifyIntent } from './queryOrchestrator';
 import type { FileBucket } from '../types';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -84,16 +80,14 @@ const RAG_TOP_K_EXTRACTION = 40;   // chunks per query for extraction steps
 const RAG_TOP_K_COMPARISON = 25;   // chunks per query for comparison evidence
 
 /**
- * RAG-based extraction context.
- * Builds query topics from the bucket name + generic functional keywords,
- * then retrieves the top-K most relevant chunks.
+ * Hybrid extraction context using the query orchestrator.
+ * Uses BM25 + semantic retrieval + reranking for higher recall and precision.
  */
 async function buildExtractionContextRAG(
   projectId: string,
   bucket: FileBucket,
   charBudget = EXTRACTION_CHAR_BUDGET
 ): Promise<string> {
-  // Broad queries to pull the main functional areas from the document
   const queries = [
     `functional requirements ${bucket}`,
     'business rules and processes',
@@ -104,10 +98,27 @@ async function buildExtractionContextRAG(
     'notifications and communications',
   ];
 
-  const chunks = await multiQuerySearch(projectId, bucket, queries, RAG_TOP_K_EXTRACTION);
-  if (chunks.length === 0) return '_No indexed content found._';
+  const result = await orchestrateRetrieval({
+    projectId,
+    bucket,
+    queries,
+    topK: RAG_TOP_K_EXTRACTION,
+    charBudget,
+    label: `${bucket.toUpperCase()} Documents`,
+    intent: 'general',
+  });
 
-  return formatRetrievedChunks(chunks, `${bucket.toUpperCase()} Documents`, charBudget);
+  console.log(
+    `[pipeline] Extraction context for ${bucket}: ` +
+    `${result.chunkCount} chunks (${result.strategy}), ` +
+    `${result.graphEntityCount} graph entities`
+  );
+
+  // Append graph context if available (provides structured dependency hints)
+  if (result.graphContext) {
+    return result.formattedContext + '\n\n' + result.graphContext;
+  }
+  return result.formattedContext;
 }
 
 /**
@@ -122,9 +133,8 @@ function buildExtractionContextFallback(files: ProjectFile[], charBudget: number
 }
 
 /**
- * RAG-based comparison context.
- * Uses the catalog areas as targeted queries to retrieve the most relevant
- * evidence passages for the comparison step.
+ * Hybrid comparison context using the query orchestrator.
+ * Uses the extracted catalog areas as targeted queries.
  */
 async function buildComparisonContextRAG(
   projectId: string,
@@ -136,10 +146,24 @@ async function buildComparisonContextRAG(
     a.name,
     ...a.keyFields.slice(0, 2),
     ...a.businessRules.slice(0, 1),
-  ]).filter(Boolean).slice(0, 20); // cap at 20 queries
+  ]).filter(Boolean).slice(0, 20);
 
-  const chunks = await multiQuerySearch(projectId, bucket, queries, RAG_TOP_K_COMPARISON);
-  return formatRetrievedChunks(chunks, `${bucket.toUpperCase()} Source Passages`, charBudget);
+  const result = await orchestrateRetrieval({
+    projectId,
+    bucket,
+    queries,
+    topK: RAG_TOP_K_COMPARISON,
+    charBudget,
+    label: `${bucket.toUpperCase()} Source Passages`,
+    intent: 'gap_analysis',
+  });
+
+  console.log(
+    `[pipeline] Comparison context for ${bucket}: ` +
+    `${result.chunkCount} chunks (${result.strategy})`
+  );
+
+  return result.formattedContext;
 }
 
 /**
@@ -268,20 +292,23 @@ export async function runAnalysisPipeline(
 
   let tobeContext: string;
   if (useRAG && projectId) {
-    // Retrieve TO-BE and business-rules buckets separately, then merge
-    const [tobeChunks, brChunks] = await Promise.all([
-      multiQuerySearch(projectId, 'to-be', [
+    // Use multi-bucket orchestration to combine to-be + business-rules
+    const result = await orchestrateRetrieval({
+      projectId,
+      bucket: ['to-be', 'business-rules'],
+      queries: [
         'functional requirements to-be', 'business rules', 'new processes',
         'user roles permissions', 'data fields validation', 'system integrations',
-      ], RAG_TOP_K_EXTRACTION),
-      multiQuerySearch(projectId, 'business-rules', [
         'business rules', 'constraints', 'eligibility', 'validation rules',
-      ], 20),
-    ]);
-    const combined = [...tobeChunks, ...brChunks]
-      .sort((a, b) => b.score - a.score)
-      .slice(0, RAG_TOP_K_EXTRACTION);
-    tobeContext = formatRetrievedChunks(combined, 'TO-BE + Business Rules Documents', EXTRACTION_CHAR_BUDGET);
+      ],
+      topK: RAG_TOP_K_EXTRACTION,
+      charBudget: EXTRACTION_CHAR_BUDGET,
+      label: 'TO-BE + Business Rules Documents',
+      intent: 'general',
+    });
+    tobeContext = result.graphContext
+      ? result.formattedContext + '\n\n' + result.graphContext
+      : result.formattedContext;
   } else {
     tobeContext = buildExtractionContextFallback([...tobeFiles, ...brFiles], EXTRACTION_CHAR_BUDGET);
   }

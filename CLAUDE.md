@@ -32,6 +32,16 @@ Run backend and frontend in separate terminals. No Docker, no monorepo tooling.
 cd backend && CLAUDE_MOCK=true npm run dev
 ```
 
+### Environment variables (`backend/.env`)
+
+| Variable | Default | Description |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | — | Required when `CLAUDE_MOCK=false` |
+| `CLAUDE_MOCK` | `true` | `false` to hit the real Claude API |
+| `CLAUDE_MODEL` | `claude-opus-4-5` | Model used for all Claude calls |
+| `PORT` | `3001` | Backend port |
+| `MAX_FILE_SIZE_MB` | `20` | Max upload size |
+
 ---
 
 ## Product
@@ -65,7 +75,7 @@ services/        ← all business logic
   taxonomy.ts          default keyword taxonomy + classifyDefects()
   almParser.ts         Excel/CSV ALM export parser → normalised Defect[]
   clusterSuggestions.ts  Claude call to discover hidden themes in "Other" defects
-  fileParsing.ts       text extraction for PDF, Word, Excel, image, markdown
+  fileParsing.ts       text extraction: PDF (pdf-parse), DOCX (mammoth), XLSX (xlsx), TXT/MD, PNG/JPG/WEBP (base64 vision)
   vectorStore.ts       embedding storage + cosine similarity search (RAG)
   embeddings.ts        Claude API embedding generation
   chunking.ts          document chunking strategies for RAG
@@ -186,3 +196,5 @@ All queries use `better-sqlite3` prepared statements (sync API — no async/awai
 - **Uploads gitignored**: `backend/uploads/` and `backend/data/` are local-only.
 - **Risk overrides are effective priority**: all cluster queries must `COALESCE(ro.overridden_priority, d.priority)` — the raw `d.priority` alone is wrong after an override.
 - **FileBucket values**: `as-is`, `to-be`, `business-rules` (not `screenshot` — that was an earlier design).
+- **Max images**: at most 10 images are sent to Claude per analysis run (enforced in `pipeline.ts`).
+- **No streaming**: analysis is async and polled by the frontend every 2s — do not introduce SSE/WebSocket without updating both sides.

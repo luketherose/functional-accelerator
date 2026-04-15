@@ -21,6 +21,8 @@ import {
   deserializeEmbedding,
   cosineSimilarity,
 } from './embeddings';
+import { indexChunksFTS, deleteChunksFTS } from './bm25Store';
+import { enqueueEnrichment } from './enrichmentQueue';
 import type { FileBucket } from '../types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -94,13 +96,34 @@ export async function indexFile(
 
   insertMany();
   console.log(`[vectorStore] Indexed ${chunks.length} chunks for ${originalName}`);
+
+  // Populate FTS5 index for BM25 hybrid search
+  try {
+    indexChunksFTS(fileId);
+  } catch (err) {
+    console.warn('[vectorStore] FTS5 indexing failed (non-fatal):', err);
+  }
+
+  // Enqueue entity extraction for progressive knowledge graph enrichment
+  try {
+    enqueueEnrichment(projectId, fileId);
+  } catch (err) {
+    console.warn('[vectorStore] Enrichment queue enqueue failed (non-fatal):', err);
+  }
+
   return { chunksIndexed: chunks.length };
 }
 
 /**
  * Remove all chunks for a file (call when a file is deleted).
+ * Also removes FTS5 index entries for consistency.
  */
 export function deleteFileChunks(fileId: string): void {
+  try {
+    deleteChunksFTS(fileId);
+  } catch (err) {
+    console.warn('[vectorStore] FTS5 delete failed (non-fatal):', err);
+  }
   db.prepare('DELETE FROM file_chunks WHERE file_id = ?').run(fileId);
 }
 
