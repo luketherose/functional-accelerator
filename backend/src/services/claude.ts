@@ -201,10 +201,34 @@ export async function callClaudeChat(
   }
 }
 
+// Errors worth retrying: overloaded (529) and rate-limited (429)
+const RETRYABLE_STATUSES = new Set([429, 529]);
+const MAX_RETRIES = 4;
+const RETRY_BASE_MS = 2000; // 2s, 4s, 8s, 16s
+
+function isRetryable(err: unknown): boolean {
+  // Anthropic SDK exposes specific error classes
+  if (err instanceof Anthropic.RateLimitError) return true;
+  if (err instanceof Anthropic.InternalServerError) {
+    // 529 overloaded comes through as InternalServerError with status 529
+    return (err as { status?: number }).status === 529 || /overloaded/i.test(err.message);
+  }
+  // Fallback: check message for known patterns
+  if (err instanceof Error) {
+    return /overloaded|529|429|rate.?limit/i.test(err.message);
+  }
+  return false;
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 /**
  * Generic pipeline step: calls Claude with streaming to avoid the SDK's 10-minute
  * non-streaming limit. Accumulates the full response then parses JSON.
  *
+ * Retries up to MAX_RETRIES times with exponential backoff on 429/529 errors.
  * temperature: 0.1 for extraction/comparison (deterministic), 0.2 for synthesis.
  * Supports Anthropic prompt caching on the system prompt via cache_control.
  */
@@ -219,64 +243,77 @@ export async function callClaudeStep<T = Record<string, unknown>>(
   }
 
   const anthropic = getClient();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
-  try {
-    let rawText = '';
-
-    const stream = anthropic.messages.stream(
-      {
-        model: MODEL,
-        max_tokens: maxTokens,
-        temperature,
-        system: [
-          {
-            type: 'text',
-            text: systemPrompt,
-            cache_control: { type: 'ephemeral' },
-          },
-        ],
-        messages: [{ role: 'user', content: userPrompt }],
-      },
-      { signal: controller.signal }
-    );
-
-    for await (const event of stream) {
-      if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-        rawText += event.delta.text;
-      }
-    }
-
-    clearTimeout(timeout);
-
-    let cleaned = rawText.trim();
-    if (cleaned.startsWith('```')) {
-      cleaned = cleaned.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
-    }
-
-    // Sanitize: escape literal control characters inside JSON strings
-    const sanitized = sanitizeJsonString(cleaned);
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
     try {
-      return JSON.parse(sanitized) as T;
-    } catch (parseErr) {
-      // Last resort: try to recover a truncated JSON
-      const recovered = recoverTruncatedJson(sanitized);
-      if (recovered !== null) {
-        console.warn('[claude] JSON truncated — recovered partial response');
-        return recovered as T;
+      let rawText = '';
+
+      const stream = anthropic.messages.stream(
+        {
+          model: MODEL,
+          max_tokens: maxTokens,
+          temperature,
+          system: [
+            {
+              type: 'text',
+              text: systemPrompt,
+              cache_control: { type: 'ephemeral' },
+            },
+          ],
+          messages: [{ role: 'user', content: userPrompt }],
+        },
+        { signal: controller.signal }
+      );
+
+      for await (const event of stream) {
+        if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+          rawText += event.delta.text;
+        }
       }
-      console.error('[claude] Failed to parse pipeline step response:', sanitized.slice(0, 500));
-      throw parseErr;
+
+      clearTimeout(timeout);
+
+      let cleaned = rawText.trim();
+      if (cleaned.startsWith('```')) {
+        cleaned = cleaned.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+      }
+
+      const sanitized = sanitizeJsonString(cleaned);
+
+      try {
+        return JSON.parse(sanitized) as T;
+      } catch (parseErr) {
+        const recovered = recoverTruncatedJson(sanitized);
+        if (recovered !== null) {
+          console.warn('[claude] JSON truncated — recovered partial response');
+          return recovered as T;
+        }
+        console.error('[claude] Failed to parse pipeline step response:', sanitized.slice(0, 500));
+        throw parseErr;
+      }
+    } catch (err: unknown) {
+      clearTimeout(timeout);
+
+      if (err instanceof Error && (err.name === 'AbortError' || err.name === 'APIUserAbortError')) {
+        throw new Error('Claude API request timed out (pipeline step)');
+      }
+
+      if (isRetryable(err) && attempt < MAX_RETRIES) {
+        const delay = RETRY_BASE_MS * Math.pow(2, attempt);
+        console.warn(`[claude] API overloaded/rate-limited (attempt ${attempt + 1}/${MAX_RETRIES + 1}) — retrying in ${delay}ms…`);
+        await sleep(delay);
+        continue;
+      }
+
+      throw err;
     }
-  } catch (err: unknown) {
-    clearTimeout(timeout);
-    if (err instanceof Error && (err.name === 'AbortError' || err.name === 'APIUserAbortError')) {
-      throw new Error('Claude API request timed out (pipeline step)');
-    }
-    throw err;
   }
+
+  // Should never reach here
+  throw new Error('callClaudeStep: exceeded max retries');
 }
 
 /**
