@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   Play, Loader2, RefreshCw, Trash2,
   Clock, CheckCircle2, AlertCircle, FileText, History,
-  Pencil, X, Check, Database, ShieldAlert, Upload, BarChart2, Settings2, GitCompare, Sparkles
+  Pencil, X, Check, Database, ShieldAlert, Upload, BarChart2, Settings2, GitCompare, Sparkles, Network
 } from 'lucide-react';
 import type { ProjectDetail, Analysis, FileBucket, UATAnalysis } from '../types';
 import { projectsApi, analysisApi, filesApi, uatApi, parseAnalysisResult, parseUATResult } from '../services/api';
@@ -310,6 +310,13 @@ export default function ProjectDetailPage() {
             <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{uatAnalyses.length}</span>
           )}
         </button>
+        <Link
+          to={`/projects/${id}/graph`}
+          className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-text-muted hover:text-text-primary transition-all -mb-px"
+        >
+          <Network size={14} />
+          Graph
+        </Link>
       </div>
 
       <div className="flex flex-1 overflow-hidden">

@@ -17,10 +17,11 @@
 import { v4 as uuidv4 } from 'uuid';
 import db from '../db';
 import { extractEntitiesFromFile } from './entityExtractor';
+import { runFunctionalGraphExtraction } from './functionalGraphExtractor';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type JobType = 'entity_extraction';
+type JobType = 'entity_extraction' | 'functional_graph_extraction';
 type JobStatus = 'pending' | 'running' | 'done' | 'failed';
 
 interface EnrichmentJobRow {
@@ -51,11 +52,14 @@ let isWorkerRunning = false;
  */
 export function enqueueEnrichment(projectId: string, fileId: string): void {
   const payload: JobPayload = { projectId, fileId };
-  db.prepare(`
+  const enqueue = db.prepare(`
     INSERT INTO enrichment_jobs (id, project_id, file_id, job_type, status, payload)
     VALUES (?, ?, ?, ?, 'pending', ?)
-  `).run(uuidv4(), projectId, fileId, 'entity_extraction' as JobType, JSON.stringify(payload));
-
+  `);
+  db.transaction(() => {
+    enqueue.run(uuidv4(), projectId, fileId, 'entity_extraction' as JobType, JSON.stringify(payload));
+    enqueue.run(uuidv4(), projectId, fileId, 'functional_graph_extraction' as JobType, JSON.stringify(payload));
+  })();
   scheduleWorker();
 }
 
@@ -154,6 +158,15 @@ async function processJob(job: EnrichmentJobRow): Promise<void> {
       const result = await extractEntitiesFromFile(payload.fileId, payload.projectId);
       console.log(
         `[enrichmentQueue] Entity extraction: ${result.entitiesFound} entities, ` +
+        `${result.relationsFound} relations for file ${payload.fileId}`
+      );
+      break;
+    }
+    case 'functional_graph_extraction': {
+      if (!payload.fileId) throw new Error('functional_graph_extraction requires fileId in payload');
+      const result = await runFunctionalGraphExtraction(payload.projectId, payload.fileId);
+      console.log(
+        `[enrichmentQueue] Functional graph extraction: ${result.entitiesFound} entities, ` +
         `${result.relationsFound} relations for file ${payload.fileId}`
       );
       break;

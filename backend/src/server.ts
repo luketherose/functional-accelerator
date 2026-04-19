@@ -15,6 +15,7 @@ import analysisRouter from './routes/analysis';
 import riskRouter from './routes/risk';
 import uatRouter from './routes/uat';
 import functionalRouter from './routes/functional';
+import graphRouter from './routes/graph';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -45,6 +46,7 @@ app.use('/api/analysis', analysisRouter);
 app.use('/api/risk', riskRouter);
 app.use('/api/uat', uatRouter);
 app.use('/api/functional', functionalRouter);
+app.use('/api/graph', graphRouter);
 
 // --- Error handler ---
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {

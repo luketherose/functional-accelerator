@@ -480,3 +480,112 @@ export interface FunctionalRunDetail extends FunctionalAnalysisRun {
   as_is_component_count: number;
   to_be_component_count: number;
 }
+
+// ─── Graph Governance Types ───────────────────────────────────────────────────
+
+export type GraphDomain = 'functional' | 'risk';
+export type GraphMode = 'manual' | 'assisted' | 'auto';
+export type SuggestionStatus = 'pending' | 'approved' | 'rejected' | 'merged' | 'ignored';
+
+export interface DomainSettings {
+  id: string;
+  project_id: string;
+  domain: GraphDomain;
+  mode: GraphMode;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DomainStats {
+  entityCount: number;
+  relationCount: number;
+  pendingSuggestions: number;
+  mode: GraphMode;
+}
+
+export interface EntityTypeConfig {
+  id: string;
+  project_id: string;
+  domain: GraphDomain;
+  type_key: string;
+  display_label: string;
+  description: string | null;
+  discoverable: boolean;
+  enabled: boolean;
+  is_base: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GraphSuggestion {
+  id: string;
+  project_id: string;
+  domain: GraphDomain;
+  suggestion_type: 'entity' | 'relation';
+  entity_type: string;
+  name: string;
+  description: string | null;
+  source_quote: string | null;
+  section_path: string | null;
+  file_id: string | null;
+  chunk_id: string | null;
+  confidence: number;
+  occurrence_count: number;
+  source_docs: string[];
+  why_suggested: string | null;
+  status: SuggestionStatus;
+  resolved_at: string | null;
+  resolved_action: string | null;
+  merged_into_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KGEntity {
+  id: string;
+  project_id: string;
+  domain: GraphDomain;
+  entity_type: string;
+  name: string;
+  description: string | null;
+  source_quote: string | null;
+  section_path: string | null;
+  confidence: number;
+  occurrence_count: number;
+  source_count: number;
+  relation_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KGRelation {
+  id: string;
+  project_id: string;
+  domain: GraphDomain;
+  source_entity_id: string;
+  target_entity_id: string;
+  relation_type: string;
+  confidence: number;
+  source_quote: string | null;
+  source_name: string;
+  target_name: string;
+  created_at: string;
+}
+
+export interface GovernanceMemory {
+  id: string;
+  project_id: string;
+  domain: GraphDomain;
+  memory_type: string;
+  pattern: string;
+  action: string;
+  canonical: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface GraphData {
+  nodes: KGEntity[];
+  edges: KGRelation[];
+}

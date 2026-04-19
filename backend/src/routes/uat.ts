@@ -13,6 +13,7 @@ import { suggestClusters } from '../services/clusterSuggestions';
 import { sanitizeMessage, sanitizeHistory } from '../utils/sanitize';
 import { callClaudeChat } from '../services/claude';
 import type { UATAnalysis } from '../types';
+import { runRiskGraphExtractionFromDefects } from '../services/riskGraphExtractor';
 
 const router = Router();
 
@@ -1075,6 +1076,15 @@ async function runUATAsync(
 
     db.prepare(`UPDATE projects SET updated_at = datetime('now') WHERE id = ?`).run(projectId);
     console.log(`[uat] Completed ${analysisId} — ${classifications.length} assignments stored`);
+
+    // Trigger async risk graph extraction (non-blocking)
+    setImmediate(() => {
+      runRiskGraphExtractionFromDefects(projectId, analysisId, result.clusterSummaries.map(c => ({
+        cluster_name: c.clusterName,
+        summary: [c.claudeSummary, c.businessImpact, c.recommendation].filter(Boolean).join(' '),
+        defects: [],
+      }))).catch((err: unknown) => console.warn('[uat] Risk graph extraction failed:', err));
+    });
 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'UAT analysis failed';

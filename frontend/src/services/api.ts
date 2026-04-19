@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult, DefectRow, ClusterTrendData, ClusterConfig, AuditOverride, SuggestClustersResult, RunComparisonData, AIChatMessage, DocumentVersion, FunctionalComponent, FunctionalAnalysisRun, FunctionalRunDetail, FunctionalGap, CoverageReport, GapImpact } from '../types';
+import type { Project, ProjectDetail, ProjectFile, Analysis, AnalysisResult, RiskAssessment, ChatMessage, ImpactFeedback, OpenQuestionFeedback, UATAnalysis, UATAnalysisResult, DefectRow, ClusterTrendData, ClusterConfig, AuditOverride, SuggestClustersResult, RunComparisonData, AIChatMessage, DocumentVersion, FunctionalComponent, FunctionalAnalysisRun, FunctionalRunDetail, FunctionalGap, CoverageReport, GapImpact, GraphDomain, DomainSettings, DomainStats, EntityTypeConfig, GraphSuggestion, KGEntity, KGRelation, GovernanceMemory, GraphData } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -314,6 +314,72 @@ export const functionalApi = {
 
   deleteRun: (projectId: string, runId: string) =>
     api.delete(`/api/functional/${projectId}/runs/${runId}`).then(r => r.data),
+};
+
+// ─── Graph Governance API ────────────────────────────────────────────────────
+
+export const graphApi = {
+  getStats: (domain: GraphDomain, projectId: string) =>
+    api.get<DomainStats>(`/api/graph/${domain}/${projectId}/stats`).then(r => r.data),
+
+  getSettings: (domain: GraphDomain, projectId: string) =>
+    api.get<DomainSettings>(`/api/graph/${domain}/${projectId}/settings`).then(r => r.data),
+
+  setMode: (domain: GraphDomain, projectId: string, mode: 'manual' | 'assisted' | 'auto') =>
+    api.put(`/api/graph/${domain}/${projectId}/settings`, { mode }).then(r => r.data),
+
+  // Ontology
+  getEntityTypes: (domain: GraphDomain, projectId: string) =>
+    api.get<EntityTypeConfig[]>(`/api/graph/${domain}/${projectId}/entity-types`).then(r => r.data),
+
+  addEntityType: (domain: GraphDomain, projectId: string, type_key: string, display_label: string, description?: string) =>
+    api.post(`/api/graph/${domain}/${projectId}/entity-types`, { type_key, display_label, description }).then(r => r.data),
+
+  updateEntityType: (domain: GraphDomain, projectId: string, typeKey: string, patch: Partial<{ display_label: string; description: string; discoverable: boolean; enabled: boolean }>) =>
+    api.patch(`/api/graph/${domain}/${projectId}/entity-types/${encodeURIComponent(typeKey)}`, patch).then(r => r.data),
+
+  // Suggestions
+  getSuggestions: (domain: GraphDomain, projectId: string, status = 'pending') =>
+    api.get<GraphSuggestion[]>(`/api/graph/${domain}/${projectId}/suggestions`, { params: { status } }).then(r => r.data),
+
+  approveSuggestion: (domain: GraphDomain, projectId: string, id: string, overrides?: { name?: string; entity_type?: string }) =>
+    api.post<{ ok: boolean; entity_id: string }>(`/api/graph/${domain}/${projectId}/suggestions/${id}/approve`, overrides ?? {}).then(r => r.data),
+
+  rejectSuggestion: (domain: GraphDomain, projectId: string, id: string, alwaysIgnore = false) =>
+    api.post(`/api/graph/${domain}/${projectId}/suggestions/${id}/reject`, { always_ignore: alwaysIgnore }).then(r => r.data),
+
+  mergeSuggestion: (domain: GraphDomain, projectId: string, id: string, targetEntityId: string) =>
+    api.post(`/api/graph/${domain}/${projectId}/suggestions/${id}/merge`, { target_entity_id: targetEntityId }).then(r => r.data),
+
+  // Entity registry
+  getEntities: (domain: GraphDomain, projectId: string, opts?: { type?: string; search?: string; limit?: number; offset?: number }) =>
+    api.get<{ entities: KGEntity[]; total: number }>(`/api/graph/${domain}/${projectId}/entities`, { params: opts }).then(r => r.data),
+
+  updateEntity: (domain: GraphDomain, projectId: string, entityId: string, patch: { name?: string; entity_type?: string; description?: string }) =>
+    api.patch(`/api/graph/${domain}/${projectId}/entities/${entityId}`, patch).then(r => r.data),
+
+  deleteEntity: (domain: GraphDomain, projectId: string, entityId: string) =>
+    api.delete(`/api/graph/${domain}/${projectId}/entities/${entityId}`).then(r => r.data),
+
+  mergeEntities: (domain: GraphDomain, projectId: string, sourceEntityId: string, targetEntityId: string) =>
+    api.post(`/api/graph/${domain}/${projectId}/entities/${sourceEntityId}/merge`, { target_entity_id: targetEntityId }).then(r => r.data),
+
+  // Relations
+  getRelations: (domain: GraphDomain, projectId: string, opts?: { entityId?: string; limit?: number; offset?: number }) =>
+    api.get<{ relations: KGRelation[]; total: number }>(`/api/graph/${domain}/${projectId}/relations`, { params: opts }).then(r => r.data),
+
+  deleteRelation: (domain: GraphDomain, projectId: string, relationId: string) =>
+    api.delete(`/api/graph/${domain}/${projectId}/relations/${relationId}`).then(r => r.data),
+
+  // Graph visualization data
+  getGraphData: (domain: GraphDomain, projectId: string, opts?: { typeFilter?: string[]; minConfidence?: number; limit?: number }) =>
+    api.get<GraphData>(`/api/graph/${domain}/${projectId}/graph-data`, {
+      params: { ...opts, typeFilter: opts?.typeFilter?.join(',') }
+    }).then(r => r.data),
+
+  // Governance memory
+  getMemory: (domain: GraphDomain, projectId: string) =>
+    api.get<GovernanceMemory[]>(`/api/graph/${domain}/${projectId}/memory`).then(r => r.data),
 };
 
 export default api;

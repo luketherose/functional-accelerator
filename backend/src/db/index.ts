@@ -234,17 +234,38 @@ db.exec(`
     project_id   TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     file_id      TEXT REFERENCES files(id) ON DELETE SET NULL,
     chunk_id     TEXT REFERENCES file_chunks(id) ON DELETE SET NULL,
+    domain       TEXT NOT NULL DEFAULT 'functional',
     entity_type  TEXT NOT NULL,
     name         TEXT NOT NULL,
     description  TEXT,
     source_quote TEXT,
     section_path TEXT,
     confidence   REAL NOT NULL DEFAULT 0.8,
+    occurrence_count INTEGER NOT NULL DEFAULT 1,
+    source_count INTEGER NOT NULL DEFAULT 1,
+    relation_count INTEGER NOT NULL DEFAULT 0,
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
-  );
+  )
+`);
 
+// Migrations for kg_entities — run BEFORE creating indexes that depend on new columns
+{
+  const kgCols = db.prepare("PRAGMA table_info(kg_entities)").all() as { name: string }[];
+  if (kgCols.length > 0 && !kgCols.find(c => c.name === 'domain')) {
+    console.log('[DB] Adding domain column to kg_entities...');
+    db.exec("ALTER TABLE kg_entities ADD COLUMN domain TEXT NOT NULL DEFAULT 'functional'");
+  }
+  if (kgCols.length > 0 && !kgCols.find(c => c.name === 'occurrence_count')) {
+    db.exec('ALTER TABLE kg_entities ADD COLUMN occurrence_count INTEGER NOT NULL DEFAULT 1');
+    db.exec('ALTER TABLE kg_entities ADD COLUMN source_count INTEGER NOT NULL DEFAULT 1');
+    db.exec('ALTER TABLE kg_entities ADD COLUMN relation_count INTEGER NOT NULL DEFAULT 0');
+  }
+}
+
+db.exec(`
   CREATE INDEX IF NOT EXISTS idx_kg_entities_project      ON kg_entities(project_id);
+  CREATE INDEX IF NOT EXISTS idx_kg_entities_domain       ON kg_entities(project_id, domain);
   CREATE INDEX IF NOT EXISTS idx_kg_entities_type         ON kg_entities(project_id, entity_type);
   CREATE INDEX IF NOT EXISTS idx_kg_entities_chunk        ON kg_entities(chunk_id);
 `);
@@ -253,6 +274,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS kg_relations (
     id                TEXT PRIMARY KEY,
     project_id        TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    domain            TEXT NOT NULL DEFAULT 'functional',
     source_entity_id  TEXT NOT NULL REFERENCES kg_entities(id) ON DELETE CASCADE,
     target_entity_id  TEXT NOT NULL REFERENCES kg_entities(id) ON DELETE CASCADE,
     relation_type     TEXT NOT NULL,
@@ -260,11 +282,114 @@ db.exec(`
     source_quote      TEXT,
     created_at        TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(source_entity_id, target_entity_id, relation_type)
-  );
+  )
+`);
 
+// Migrations for kg_relations — run BEFORE creating indexes on new columns
+{
+  const kgRelCols = db.prepare("PRAGMA table_info(kg_relations)").all() as { name: string }[];
+  if (kgRelCols.length > 0 && !kgRelCols.find(c => c.name === 'domain')) {
+    console.log('[DB] Adding domain column to kg_relations...');
+    db.exec("ALTER TABLE kg_relations ADD COLUMN domain TEXT NOT NULL DEFAULT 'functional'");
+  }
+}
+
+db.exec(`
   CREATE INDEX IF NOT EXISTS idx_kg_relations_project ON kg_relations(project_id);
+  CREATE INDEX IF NOT EXISTS idx_kg_relations_domain  ON kg_relations(project_id, domain);
   CREATE INDEX IF NOT EXISTS idx_kg_relations_source  ON kg_relations(source_entity_id);
   CREATE INDEX IF NOT EXISTS idx_kg_relations_target  ON kg_relations(target_entity_id);
+`);
+
+// --- Graph governance tables ---
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS graph_domain_settings (
+    id         TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    domain     TEXT NOT NULL,
+    mode       TEXT NOT NULL DEFAULT 'assisted',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, domain)
+  );
+
+  CREATE TABLE IF NOT EXISTS graph_entity_type_config (
+    id           TEXT PRIMARY KEY,
+    project_id   TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    domain       TEXT NOT NULL,
+    type_key     TEXT NOT NULL,
+    display_label TEXT NOT NULL,
+    description  TEXT,
+    discoverable INTEGER NOT NULL DEFAULT 1,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    is_base      INTEGER NOT NULL DEFAULT 0,
+    sort_order   INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, domain, type_key)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_graph_entity_type_config_project ON graph_entity_type_config(project_id, domain);
+
+  CREATE TABLE IF NOT EXISTS graph_suggestions (
+    id             TEXT PRIMARY KEY,
+    project_id     TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    domain         TEXT NOT NULL,
+    suggestion_type TEXT NOT NULL DEFAULT 'entity',
+    entity_type    TEXT NOT NULL,
+    name           TEXT NOT NULL,
+    description    TEXT,
+    source_quote   TEXT,
+    section_path   TEXT,
+    file_id        TEXT REFERENCES files(id) ON DELETE SET NULL,
+    chunk_id       TEXT REFERENCES file_chunks(id) ON DELETE SET NULL,
+    confidence     REAL NOT NULL DEFAULT 0.8,
+    occurrence_count INTEGER NOT NULL DEFAULT 1,
+    source_docs    TEXT NOT NULL DEFAULT '[]',
+    why_suggested  TEXT,
+    status         TEXT NOT NULL DEFAULT 'pending',
+    resolved_at    TEXT,
+    resolved_action TEXT,
+    merged_into_id TEXT REFERENCES kg_entities(id) ON DELETE SET NULL,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_graph_suggestions_project ON graph_suggestions(project_id, domain, status);
+
+  CREATE TABLE IF NOT EXISTS graph_relation_suggestions (
+    id                   TEXT PRIMARY KEY,
+    project_id           TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    domain               TEXT NOT NULL,
+    source_entity_name   TEXT NOT NULL,
+    target_entity_name   TEXT NOT NULL,
+    source_entity_id     TEXT REFERENCES kg_entities(id) ON DELETE SET NULL,
+    target_entity_id     TEXT REFERENCES kg_entities(id) ON DELETE SET NULL,
+    relation_type        TEXT NOT NULL,
+    confidence           REAL NOT NULL DEFAULT 0.7,
+    source_quote         TEXT,
+    status               TEXT NOT NULL DEFAULT 'pending',
+    resolved_at          TEXT,
+    created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_graph_rel_suggestions_project ON graph_relation_suggestions(project_id, domain, status);
+
+  CREATE TABLE IF NOT EXISTS graph_governance_memory (
+    id          TEXT PRIMARY KEY,
+    project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    domain      TEXT NOT NULL,
+    memory_type TEXT NOT NULL,
+    pattern     TEXT NOT NULL,
+    action      TEXT NOT NULL,
+    canonical   TEXT,
+    metadata    TEXT NOT NULL DEFAULT '{}',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, domain, memory_type, pattern)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_graph_memory_project ON graph_governance_memory(project_id, domain);
 `);
 
 // --- Enrichment job queue ---
@@ -457,6 +582,7 @@ if (cols.length > 0 && !cols.find(c => c.name === 'image_data')) {
   db.pragma('foreign_keys = ON');
   console.log('[DB] Migration complete.');
 }
+
 
 console.log('[DB] SQLite initialized at', path.resolve(DB_PATH));
 
