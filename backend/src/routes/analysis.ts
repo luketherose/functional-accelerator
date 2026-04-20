@@ -219,6 +219,18 @@ async function runAnalysisAsync(
     db.prepare(`UPDATE projects SET status = 'done', updated_at = datetime('now') WHERE id = ?`).run(projectId);
     console.log(`[analysis] Completed ${analysisId}`);
 
+    // Trigger functional graph extraction on all project files (non-blocking)
+    setImmediate(async () => {
+      try {
+        const { runFunctionalGraphExtraction } = await import('../services/functionalGraphExtractor');
+        const projectFiles = db.prepare("SELECT id FROM files WHERE project_id = ?").all(projectId) as { id: string }[];
+        for (const file of projectFiles) {
+          await runFunctionalGraphExtraction(projectId, file.id).catch(() => {});
+        }
+        console.log(`[analysis] Functional graph extraction queued for ${projectFiles.length} file(s)`);
+      } catch { /* non-blocking */ }
+    });
+
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Analysis failed';
     console.error(`[analysis] Failed ${analysisId}:`, msg);

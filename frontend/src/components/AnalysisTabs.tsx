@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import type {
   AnalysisResult, Impact, BusinessRule, ProposedChange, ImpactFeedback, OpenQuestionFeedback
 } from '../types';
 import {
   FileText, Layers, Monitor, BookOpen,
   HelpCircle, Lightbulb, AlertTriangle, ChevronDown, ChevronUp,
-  ThumbsUp, ThumbsDown, MessageSquarePlus, CheckCircle2, XCircle
+  ThumbsUp, ThumbsDown, MessageSquarePlus, CheckCircle2, XCircle, Network
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import ImpactPrototype from './ImpactPrototype';
@@ -339,6 +340,13 @@ export default function AnalysisTabs({ result, projectId, analysisId }: Analysis
             {t(tab.labelKey)}
           </button>
         ))}
+        <Link
+          to={`/projects/${projectId}/graph?domain=functional`}
+          className="tab flex items-center gap-2 text-text-muted hover:text-text-primary"
+        >
+          <Network size={14} />
+          Functional Graph
+        </Link>
       </div>
 
       {/* Tab content */}

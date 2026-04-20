@@ -310,13 +310,6 @@ export default function ProjectDetailPage() {
             <span className="bg-brand-100 text-purple-deep px-1.5 rounded-full text-[10px] font-semibold">{uatAnalyses.length}</span>
           )}
         </button>
-        <Link
-          to={`/projects/${id}/graph`}
-          className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-text-muted hover:text-text-primary transition-all -mb-px"
-        >
-          <Network size={14} />
-          Graph
-        </Link>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
@@ -674,6 +667,12 @@ export default function ProjectDetailPage() {
                 >
                   <Sparkles size={12} /> {t('projectDetail.tabAI')}
                 </button>
+                <Link
+                  to={`/projects/${id}/graph?domain=risk`}
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 border-transparent text-text-muted hover:text-text-primary transition-all -mb-px"
+                >
+                  <Network size={12} /> Risk Graph
+                </Link>
                 <button
                   onClick={() => setTaxonomyOpen(true)}
                   className="ml-auto flex items-center gap-1 px-2.5 py-1.5 text-[11px] text-text-muted hover:text-purple-deep hover:bg-surface-muted rounded-lg transition-colors my-auto"
